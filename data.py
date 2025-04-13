@@ -15,9 +15,30 @@ SIMULATION_END_DATE = date(2024, 12, 31)
 SIMULATION_DAYS = (SIMULATION_END_DATE - SIMULATION_START_DATE).days
 
 PLANS = {
-    "Basic": {"monthly": 75, "annual": 50 * 12, "mrr": 75, "arr": 50 * 12},
-    "Pro": {"monthly": 135, "annual": 120 * 12, "mrr": 135, "arr": 120 * 12},
-    "Enterprise": {"monthly": 315, "annual": 300 * 12, "mrr": 315, "arr": 300 * 12},
+    "Basic": {
+        "monthly": 75,
+        "annual": 50 * 12,
+        "mrr": 75,
+        "arr": 50 * 12,
+        "cogs_pct": 0.25,  # Cost of Goods Sold percentage
+        "gross_margin": 0.75,  # Gross margin percentage (1 - COGS)
+    },
+    "Pro": {
+        "monthly": 135,
+        "annual": 120 * 12,
+        "mrr": 135,
+        "arr": 120 * 12,
+        "cogs_pct": 0.20,  # Lower COGS for higher tier
+        "gross_margin": 0.80,
+    },
+    "Enterprise": {
+        "monthly": 315,
+        "annual": 300 * 12,
+        "mrr": 315,
+        "arr": 300 * 12,
+        "cogs_pct": 0.15,  # Even lower COGS for highest tier
+        "gross_margin": 0.85,
+    },
 }
 
 GEOGRAPHY_DIST = {"North America": 0.60, "Europe": 0.25, "Asia-Pacific": 0.15}
@@ -27,6 +48,15 @@ ACQUISITION_CHANNEL_DIST = {"Paid Ads": 0.50, "Organic Search": 0.30, "Email Cam
 SUBSCRIPTION_TYPE_DIST = {"annual": 0.65, "monthly": 0.35}
 INITIAL_PLAN_DIST = {"Basic": 0.50, "Pro": 0.40, "Enterprise": 0.10}
 
+# Lead sources (separate from acquisition channels)
+LEAD_SOURCE_DIST = {
+    "Website Form": 0.35,
+    "Direct Referral": 0.25,
+    "Social Media": 0.20,
+    "Conference": 0.10,
+    "Partner": 0.10,
+}
+
 # Simplified CAC per channel
 CAC_BY_CHANNEL = {"Paid Ads": 250, "Organic Search": 50, "Email Campaigns": 150}
 
@@ -34,6 +64,44 @@ CAC_BY_CHANNEL = {"Paid Ads": 250, "Organic Search": 50, "Email Campaigns": 150}
 MONTHLY_CHURN_RATE = 0.02  # Overall base rate
 MONTHLY_UPGRADE_RATE = 0.03
 MONTHLY_DOWNGRADE_RATE = 0.01
+
+# Usage metrics configuration
+USAGE_BASE_LOGINS_PER_MONTH = {
+    "Basic": 5,  # Base logins per month for Basic plan
+    "Pro": 12,  # Base logins per month for Pro plan
+    "Enterprise": 25,  # Base logins per month for Enterprise plan
+}
+
+FEATURE_USAGE_DISTRIBUTION = {
+    "Basic": {
+        "Dashboard": 0.90,
+        "Reports": 0.70,
+        "User Management": 0.30,
+        "API Access": 0.05,
+        "Advanced Analytics": 0.02,
+    },
+    "Pro": {
+        "Dashboard": 0.95,
+        "Reports": 0.85,
+        "User Management": 0.60,
+        "API Access": 0.40,
+        "Advanced Analytics": 0.30,
+    },
+    "Enterprise": {
+        "Dashboard": 0.98,
+        "Reports": 0.95,
+        "User Management": 0.85,
+        "API Access": 0.75,
+        "Advanced Analytics": 0.65,
+    },
+}
+
+# Support ticket configuration
+MONTHLY_TICKET_PROBABILITY = 0.3  # Base probability of generating a ticket in a month
+TICKET_CATEGORIES = ["Billing Issue", "Technical Problem", "Feature Request", "Account Access", "General Question"]
+
+TICKET_PRIORITY = ["Low", "Medium", "High", "Critical"]
+TICKET_PRIORITY_DIST = {"Low": 0.4, "Medium": 0.3, "High": 0.2, "Critical": 0.1}
 
 
 def _get_random_item(dist: dict) -> str:
@@ -49,7 +117,12 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
 
     customers_data = []
     subscription_events = []
+    usage_data = []
+    support_tickets = []
+
     event_id_counter = 1
+    usage_id_counter = 1
+    ticket_id_counter = 1
 
     print(f"Simulating {CUSTOMER_COUNT} customers from {SIMULATION_START_DATE} to {SIMULATION_END_DATE}...")
 
@@ -64,6 +137,7 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
         industry = _get_random_item(INDUSTRY_DIST)
         customer_type = _get_random_item(CUSTOMER_TYPE_DIST)
         acquisition_channel = _get_random_item(ACQUISITION_CHANNEL_DIST)
+        lead_source = _get_random_item(LEAD_SOURCE_DIST)
         initial_plan = _get_random_item(INITIAL_PLAN_DIST)
         initial_sub_type = _get_random_item(SUBSCRIPTION_TYPE_DIST)
         cac = CAC_BY_CHANNEL[acquisition_channel]
@@ -73,6 +147,7 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
                 "customer_id": customer_id,
                 "acquisition_date": acquisition_date,
                 "acquisition_channel": acquisition_channel,
+                "lead_source": lead_source,
                 "geography": geography,
                 "industry": industry,
                 "customer_type": customer_type,
@@ -91,6 +166,12 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
         # Initial signup event
         mrr = PLANS[current_plan]["mrr"] if current_sub_type == "monthly" else 0
         arr = PLANS[current_plan]["arr"] if current_sub_type == "annual" else 0
+        gross_margin = PLANS[current_plan]["gross_margin"]
+
+        # Calculate profit (revenue after COGS)
+        monthly_profit = mrr * gross_margin if current_sub_type == "monthly" else 0
+        annual_profit = arr * gross_margin if current_sub_type == "annual" else 0
+
         subscription_events.append(
             {
                 "event_id": event_id_counter,
@@ -102,6 +183,9 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
                 "subscription_type": current_sub_type,
                 "mrr": mrr,
                 "arr": arr,
+                "gross_margin": gross_margin,
+                "monthly_profit": monthly_profit,
+                "annual_profit": annual_profit,
             }
         )
         event_id_counter += 1
@@ -117,7 +201,51 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
             # Renewal Check (simplified: assume renewal happens monthly/annually)
             # Actual renewals would depend on the initial sub_type and date
 
-            # Check for Churn first
+            # Generate usage data for this month first (before potential churn)
+            monthly_logins = random.randint(
+                int(USAGE_BASE_LOGINS_PER_MONTH[current_plan] * 0.7),
+                int(USAGE_BASE_LOGINS_PER_MONTH[current_plan] * 1.3),
+            )
+
+            # Track feature usage
+            for feature, probability in FEATURE_USAGE_DISTRIBUTION[current_plan].items():
+                if random.random() < probability:
+                    # User used this feature this month
+                    usage_count = random.randint(1, monthly_logins)  # Used up to max logins times
+                    usage_data.append(
+                        {
+                            "usage_id": usage_id_counter,
+                            "customer_id": customer_id,
+                            "month": current_date,
+                            "feature": feature,
+                            "usage_count": usage_count,
+                            "plan": current_plan,
+                        }
+                    )
+                    usage_id_counter += 1
+
+            # Generate support tickets (independent of churn)
+            if random.random() < MONTHLY_TICKET_PROBABILITY:
+                ticket_category = random.choice(TICKET_CATEGORIES)
+                ticket_priority = _get_random_item(TICKET_PRIORITY_DIST)
+                resolution_days = random.randint(1, 14) if ticket_priority != "Critical" else random.randint(1, 3)
+                resolution_date = current_date + timedelta(days=resolution_days)
+
+                support_tickets.append(
+                    {
+                        "ticket_id": ticket_id_counter,
+                        "customer_id": customer_id,
+                        "creation_date": current_date,
+                        "resolution_date": resolution_date,
+                        "category": ticket_category,
+                        "priority": ticket_priority,
+                        "resolution_time_days": resolution_days,
+                        "plan": current_plan,
+                    }
+                )
+                ticket_id_counter += 1
+
+            # Churn Check first
             churn_roll = random.random()
             # Adjust churn based on factors (e.g., Enterprise less likely, Retail more likely)
             churn_modifier = 1.0
@@ -128,6 +256,16 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
 
             if churn_roll < (MONTHLY_CHURN_RATE * churn_modifier):
                 is_active = False
+                gross_margin = PLANS[current_plan]["gross_margin"]
+
+                # Calculate lost profit
+                monthly_profit_lost = (
+                    -PLANS[current_plan]["mrr"] * gross_margin if current_sub_type == "monthly" else 0
+                )
+                annual_profit_lost = (
+                    -PLANS[current_plan]["arr"] * gross_margin if current_sub_type == "annual" else 0
+                )
+
                 subscription_events.append(
                     {
                         "event_id": event_id_counter,
@@ -139,6 +277,9 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
                         "subscription_type": None,
                         "mrr": -PLANS[current_plan]["mrr"] if current_sub_type == "monthly" else 0,
                         "arr": -PLANS[current_plan]["arr"] if current_sub_type == "annual" else 0,
+                        "gross_margin": gross_margin,
+                        "monthly_profit": monthly_profit_lost,
+                        "annual_profit": annual_profit_lost,
                     }
                 )
                 event_id_counter += 1
@@ -161,6 +302,13 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
                     (PLANS[new_plan]["arr"] - PLANS[old_plan]["arr"]) if current_sub_type == "annual" else 0
                 )
 
+                # Gross margin of the new plan
+                new_gross_margin = PLANS[new_plan]["gross_margin"]
+
+                # Calculate profit change
+                monthly_profit_change = mrr_change * new_gross_margin
+                annual_profit_change = arr_change * new_gross_margin
+
                 subscription_events.append(
                     {
                         "event_id": event_id_counter,
@@ -172,6 +320,9 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
                         "subscription_type": current_sub_type,
                         "mrr": mrr_change,
                         "arr": arr_change,
+                        "gross_margin": new_gross_margin,
+                        "monthly_profit": monthly_profit_change,
+                        "annual_profit": annual_profit_change,
                     }
                 )
                 event_id_counter += 1
@@ -193,6 +344,13 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
                     (PLANS[new_plan]["arr"] - PLANS[old_plan]["arr"]) if current_sub_type == "annual" else 0
                 )
 
+                # Gross margin of the new plan
+                new_gross_margin = PLANS[new_plan]["gross_margin"]
+
+                # Calculate profit change
+                monthly_profit_change = mrr_change * new_gross_margin
+                annual_profit_change = arr_change * new_gross_margin
+
                 subscription_events.append(
                     {
                         "event_id": event_id_counter,
@@ -204,6 +362,9 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
                         "subscription_type": current_sub_type,
                         "mrr": mrr_change,
                         "arr": arr_change,
+                        "gross_margin": new_gross_margin,
+                        "monthly_profit": monthly_profit_change,
+                        "annual_profit": annual_profit_change,
                     }
                 )
                 event_id_counter += 1
@@ -216,16 +377,40 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
     events_df = pd.DataFrame(subscription_events)
     events_df["event_date"] = pd.to_datetime(events_df["event_date"])
 
+    # Process usage data
+    usage_df = pd.DataFrame(usage_data)
+    if not usage_df.empty:
+        usage_df["month"] = pd.to_datetime(usage_df["month"])
+
+    # Process support tickets
+    tickets_df = pd.DataFrame(support_tickets)
+    if not tickets_df.empty:
+        tickets_df["creation_date"] = pd.to_datetime(tickets_df["creation_date"])
+        tickets_df["resolution_date"] = pd.to_datetime(tickets_df["resolution_date"])
+
+    # Save all datasets
     customers_df.to_csv(output_path / "customers.csv", index=False, date_format="%Y-%m-%d")
     events_df.to_csv(output_path / "subscription_events.csv", index=False, date_format="%Y-%m-%d")
+
+    if not usage_df.empty:
+        usage_df.to_csv(output_path / "usage_metrics.csv", index=False, date_format="%Y-%m-%d")
+
+    if not tickets_df.empty:
+        tickets_df.to_csv(output_path / "support_tickets.csv", index=False, date_format="%Y-%m-%d")
 
     # --- Clean up old files ---
     (output_path / "financial_records.json").unlink(missing_ok=True)
     (output_path / "employee_metrics.csv").unlink(missing_ok=True)
     (output_path / "quarterly_report.md").unlink(missing_ok=True)
 
-    print(f"Generated SaaS data: {len(customers_df)} customers, {len(events_df)} events.")
-    print(f"Output files: customers.csv, subscription_events.csv in '{output_path.resolve()}'")
+    print("Generated SaaS data:")
+    print(f"- {len(customers_df)} customers")
+    print(f"- {len(events_df)} subscription events")
+    print(f"- {len(usage_data)} usage data points")
+    print(f"- {len(support_tickets)} support tickets")
+    print(
+        f"Output files: customers.csv, subscription_events.csv, usage_metrics.csv, support_tickets.csv in '{output_path.resolve()}'"
+    )
 
 
 if __name__ == "__main__":

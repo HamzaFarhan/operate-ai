@@ -19,6 +19,8 @@ dependencies = [
     "pyarrow>=19.0.1",
     "pydantic-ai>=0.0.55",
     "xlsxwriter>=3.2.2",
+    "python-dateutil>=2.9.0.post0",
+    "scipy>=1.15.2",
 ]
 
 [project.scripts]

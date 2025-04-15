@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
+from dateutil.relativedelta import relativedelta
 from faker import Faker
 
 fake = Faker()
@@ -55,6 +56,13 @@ LEAD_SOURCE_DIST = {
     "Social Media": 0.20,
     "Conference": 0.10,
     "Partner": 0.10,
+}
+
+# Marketing spend configuration
+MARKETING_SPEND_BY_CHANNEL = {
+    "Paid Ads": {"base": 15000, "variance": 3000},  # Higher cost channel
+    "Organic Search": {"base": 5000, "variance": 1000},  # Lower cost channel
+    "Email Campaigns": {"base": 8000, "variance": 2000},  # Medium cost channel
 }
 
 # Simplified CAC per channel
@@ -119,6 +127,8 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
     subscription_events = []
     usage_data = []
     support_tickets = []
+    marketing_data = []
+    orders_data = []
 
     event_id_counter = 1
     usage_id_counter = 1
@@ -370,12 +380,165 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
                 event_id_counter += 1
                 continue  # Assume only one event per month
 
+    # --- Generate Marketing Spend Data ---
+    current_date = SIMULATION_START_DATE
+    # Generate monthly marketing data for the entire simulation period
+    while current_date <= SIMULATION_END_DATE:
+        for channel, spend_config in MARKETING_SPEND_BY_CHANNEL.items():
+            # Calculate monthly spend with some randomness
+            base_spend = spend_config["base"]
+            variance = spend_config["variance"]
+            monthly_spend = base_spend + random.randint(-variance, variance)
+
+            marketing_data.append({"date": current_date, "channel": channel, "spend": monthly_spend})
+
+        # Move to next month
+        current_date = current_date.replace(day=1) + relativedelta(months=1)
+
+    # --- Generate Orders Data (including recurring charges) ---
+    # Process subscription events to create comprehensive orders table
+    for event in subscription_events:
+        # Add initial order
+        if event["event_type"] == "signup":
+            customer_id = event["customer_id"]
+            order_date = event["event_date"]
+            plan_type = event["new_plan"]
+            subscription_type = event["subscription_type"]
+
+            # Calculate revenue and profit
+            if subscription_type == "monthly":
+                revenue = PLANS[plan_type]["mrr"]
+                profit = revenue * PLANS[plan_type]["gross_margin"]
+                orders_data.append(
+                    {
+                        "order_id": f"ORD_{len(orders_data) + 1}",
+                        "customer_id": customer_id,
+                        "order_date": order_date,
+                        "subscription_type": subscription_type,
+                        "plan_type": plan_type,
+                        "revenue": revenue,
+                        "profit": profit,
+                        "order_type": "initial",
+                    }
+                )
+
+                # Generate recurring monthly charges until churn or simulation end
+                current_date = order_date
+                active = True
+
+                # Look for churn, upgrade, or downgrade events for this customer
+                changes = [
+                    (e["event_date"], e["event_type"], e["new_plan"])
+                    for e in subscription_events
+                    if e["customer_id"] == customer_id and e["event_type"] in ["churn", "upgrade", "downgrade"]
+                ]
+                changes.sort(key=lambda x: x[0])  # Sort by date
+
+                while active and current_date <= SIMULATION_END_DATE:
+                    # Move to next month
+                    current_date = current_date.replace(day=1) + relativedelta(months=1)
+
+                    # Check if there's a change before this billing date
+                    applicable_changes = [c for c in changes if c[0] < current_date]
+                    if applicable_changes:
+                        latest_change = max(applicable_changes, key=lambda x: x[0])  # Most recent change
+                        if latest_change[1] == "churn":
+                            active = False
+                            break
+                        elif latest_change[1] in ["upgrade", "downgrade"]:
+                            plan_type = latest_change[2]  # Update to new plan
+
+                    if active:
+                        # Add recurring monthly charge
+                        revenue = PLANS[plan_type]["mrr"]
+                        profit = revenue * PLANS[plan_type]["gross_margin"]
+                        orders_data.append(
+                            {
+                                "order_id": f"ORD_{len(orders_data) + 1}",
+                                "customer_id": customer_id,
+                                "order_date": current_date,
+                                "subscription_type": subscription_type,
+                                "plan_type": plan_type,
+                                "revenue": revenue,
+                                "profit": profit,
+                                "order_type": "recurring",
+                            }
+                        )
+
+            # Handle annual subscriptions
+            elif subscription_type == "annual":
+                revenue = PLANS[plan_type]["arr"]
+                profit = revenue * PLANS[plan_type]["gross_margin"]
+                orders_data.append(
+                    {
+                        "order_id": f"ORD_{len(orders_data) + 1}",
+                        "customer_id": customer_id,
+                        "order_date": order_date,
+                        "subscription_type": subscription_type,
+                        "plan_type": plan_type,
+                        "revenue": revenue,
+                        "profit": profit,
+                        "order_type": "initial",
+                    }
+                )
+
+                # Generate annual renewals until churn or simulation end
+                current_date = order_date
+                active = True
+
+                # Look for churn, upgrade, or downgrade events for this customer
+                changes = [
+                    (e["event_date"], e["event_type"], e["new_plan"])
+                    for e in subscription_events
+                    if e["customer_id"] == customer_id and e["event_type"] in ["churn", "upgrade", "downgrade"]
+                ]
+                changes.sort(key=lambda x: x[0])  # Sort by date
+
+                while active and current_date <= SIMULATION_END_DATE:
+                    # Move to next year
+                    current_date = current_date.replace(day=1) + relativedelta(years=1)
+
+                    # Check if there's a change before this billing date
+                    applicable_changes = [c for c in changes if c[0] < current_date]
+                    if applicable_changes:
+                        latest_change = max(applicable_changes, key=lambda x: x[0])  # Most recent change
+                        if latest_change[1] == "churn":
+                            active = False
+                            break
+                        elif latest_change[1] in ["upgrade", "downgrade"]:
+                            plan_type = latest_change[2]  # Update to new plan
+
+                    if active and current_date <= SIMULATION_END_DATE:
+                        # Add recurring annual charge
+                        revenue = PLANS[plan_type]["arr"]
+                        profit = revenue * PLANS[plan_type]["gross_margin"]
+                        orders_data.append(
+                            {
+                                "order_id": f"ORD_{len(orders_data) + 1}",
+                                "customer_id": customer_id,
+                                "order_date": current_date,
+                                "subscription_type": subscription_type,
+                                "plan_type": plan_type,
+                                "revenue": revenue,
+                                "profit": profit,
+                                "order_type": "renewal",
+                            }
+                        )
+
     # --- Create DataFrames and Save ---
     customers_df = pd.DataFrame(customers_data)
     customers_df["acquisition_date"] = pd.to_datetime(customers_df["acquisition_date"])
 
     events_df = pd.DataFrame(subscription_events)
     events_df["event_date"] = pd.to_datetime(events_df["event_date"])
+
+    # Process marketing data
+    marketing_df = pd.DataFrame(marketing_data)
+    marketing_df["date"] = pd.to_datetime(marketing_df["date"])
+
+    # Process orders data
+    orders_df = pd.DataFrame(orders_data)
+    orders_df["order_date"] = pd.to_datetime(orders_df["order_date"])
 
     # Process usage data
     usage_df = pd.DataFrame(usage_data)
@@ -391,6 +554,8 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
     # Save all datasets
     customers_df.to_csv(output_path / "customers.csv", index=False, date_format="%Y-%m-%d")
     events_df.to_csv(output_path / "subscription_events.csv", index=False, date_format="%Y-%m-%d")
+    marketing_df.to_csv(output_path / "marketing_data.csv", index=False, date_format="%Y-%m-%d")
+    orders_df.to_csv(output_path / "orders.csv", index=False, date_format="%Y-%m-%d")
 
     if not usage_df.empty:
         usage_df.to_csv(output_path / "usage_metrics.csv", index=False, date_format="%Y-%m-%d")
@@ -406,10 +571,12 @@ def generate_saas_data(output_dir: str | Path = "data") -> None:
     print("Generated SaaS data:")
     print(f"- {len(customers_df)} customers")
     print(f"- {len(events_df)} subscription events")
+    print(f"- {len(marketing_df)} marketing data entries")
+    print(f"- {len(orders_df)} order records")
     print(f"- {len(usage_data)} usage data points")
     print(f"- {len(support_tickets)} support tickets")
     print(
-        f"Output files: customers.csv, subscription_events.csv, usage_metrics.csv, support_tickets.csv in '{output_path.resolve()}'"
+        f"Output files: customers.csv, subscription_events.csv, marketing_data.csv, orders.csv, usage_metrics.csv, support_tickets.csv in '{output_path.resolve()}'"
     )
 
 

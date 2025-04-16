@@ -17,5 +17,3 @@ res = agent1.run_sync(user_prompt)
 res2 = agent2.run_sync("what are your instructions?", message_history=res.all_messages())
 
 print(f"MY INSTRUCTIONS:\n{res2.output}")
-
-[print(msg, "\n") for msg in res2.all_messages()]

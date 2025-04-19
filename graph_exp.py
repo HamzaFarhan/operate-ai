@@ -1,13 +1,17 @@
+from __future__ import annotations
+
 import asyncio
 from dataclasses import dataclass
-from typing import Self, TypeVar
+from datetime import datetime
+from typing import TypeVar
 
 import nest_asyncio
 from dotenv import load_dotenv
 from loguru import logger
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.tools import Tool, ToolDefinition
+from pydantic_ai.tools import Tool
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 nest_asyncio.apply()
 load_dotenv()
@@ -30,7 +34,7 @@ class AgentPrompt(BaseModel):
 
 
 @dataclass
-class UserData:
+class GraphDeps:
     name: str
     location: str
 
@@ -38,26 +42,10 @@ class UserData:
         return f"<user_name>\n{self.name}\n</user_name>\n<user_location>\n{self.location}\n</user_location>"
 
 
-@dataclass
-class ExecutorDeps:
-    user_data: UserData
-    prompts: list[AgentPrompt]
-
-
-@dataclass
-class PlannerDeps:
-    user_data: UserData
-    available_tools: dict[str, Tool[ExecutorDeps]]
-
-    @classmethod
-    def from_agent(cls, user_data: UserData, agent: Agent[ExecutorDeps, AgentOutput]) -> Self:
-        return cls(user_data=user_data, available_tools=agent._function_tools)
-
-
 user_info_agent = Agent(
     name="user_info_agent",
     model=MODEL,
-    deps_type=ExecutorDeps,
+    deps_type=GraphDeps,
     instructions="Use the tools at your disposal to fetch user info based on the prompt.",
 )
 
@@ -82,7 +70,7 @@ def get_user_location(name: str) -> str:
     return location_dict.get(name, "Unknown")
 
 
-async def get_user_info(ctx: RunContext[ExecutorDeps], prompt: str) -> str:
+async def get_user_info(ctx: RunContext[GraphDeps], prompt: str) -> str:
     """
     Processes the given prompt to retrieve user information (age or location).
     Use this tool if the required agent prompt targets user information.
@@ -102,7 +90,7 @@ async def get_user_info(ctx: RunContext[ExecutorDeps], prompt: str) -> str:
 weather_agent = Agent(
     name="weather_agent",
     model=MODEL,
-    deps_type=ExecutorDeps,
+    deps_type=GraphDeps,
     instructions="Use the tools at your disposal to fetch weather info based on the prompt.",
 )
 
@@ -127,7 +115,7 @@ def get_temperature(location: str) -> float:
     return temp_dict.get(location.lower(), 0.0)
 
 
-async def get_weather(ctx: RunContext[ExecutorDeps], prompt: str) -> str:
+async def get_weather(ctx: RunContext[GraphDeps], prompt: str) -> str:
     """
     Processes the given prompt to retrieve weather information (condition or temperature).
     Use this tool if the required agent prompt targets weather information.
@@ -148,7 +136,7 @@ async def get_weather(ctx: RunContext[ExecutorDeps], prompt: str) -> str:
 planner_agent = Agent(
     name="planner_agent",
     model=MODEL,
-    deps_type=PlannerDeps,
+    deps_type=GraphDeps,
     instructions=(
         "Based on the user's overall goal, create a list of prompts for specialized agents.\n"
         "Each item in the list should be an 'AgentPrompt' containing:\n"
@@ -162,86 +150,84 @@ planner_agent = Agent(
 )
 
 
-async def prepare_executor_tool(ctx: RunContext[ExecutorDeps], tool_def: ToolDefinition) -> ToolDefinition | None:
-    """Only prepare tools that are listed in the plan's prompts."""
-    if ctx.deps.prompts is None:
-        logger.warning("No prompts provided to executor, preparing all tools.")
-        return tool_def
-    for agent_prompt in ctx.deps.prompts:
-        if agent_prompt.tool == tool_def.name:
-            logger.debug(f"Preparing tool '{tool_def.name}' as it's in the plan.")
-            return tool_def
-    logger.debug(f"Skipping tool '{tool_def.name}' as it's not in the plan.")
-    return None
-
-
 executor_agent = Agent(
     name="executor_agent",
     model=MODEL,
-    deps_type=ExecutorDeps,
+    deps_type=GraphDeps,
     instructions=(
         "You will receive an overall goal and a list of specific prompts targeted at different tools/agents.\n"
         "Execute the prompts sequentially using the specified tool for each.\n"
-        "Pass the exact 'prompt' from the AgentPrompt object to the corresponding tool.\n"
+        "You may add relevant data/context from completed tasks to subsequent prompts as needed.\n"
+        "Pass the 'prompt' from the AgentPrompt object to the corresponding tool, "
+        "updating it with new context when appropriate.\n"
         "Gather the results from each tool execution.\n"
         "Once all prompts are executed, synthesize the results and return a final answer in a `Success` object.\n"
         "Use the results from previous steps if needed for subsequent prompts."
     ),
     output_type=AgentOutput[str],
-    tools=[Tool(get_user_info, prepare=prepare_executor_tool), Tool(get_weather, prepare=prepare_executor_tool)],
+    tools=[get_user_info, get_weather],
 )
-
-
-@planner_agent.instructions
-def planner_context(ctx: RunContext[PlannerDeps]) -> str:
-    res = f"\n\n{ctx.deps.user_data}\n\n<available_tools>\n"
-    for tool in ctx.deps.available_tools.values():
-        res += f"- {tool.name}: {tool.description}\n"
-    res += "</available_tools>\n\n"
-    return res
 
 
 @user_info_agent.instructions
 @weather_agent.instructions
 @executor_agent.instructions
-def user_data_context(ctx: RunContext[ExecutorDeps]) -> str:
-    return f"\n\n{ctx.deps.user_data}\n\n"
+@planner_agent.instructions
+def user_data_context(ctx: RunContext[GraphDeps]) -> str:
+    return f"\n\n{ctx.deps}\n\n<current_time>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</current_time>\n\n"
 
 
-@executor_agent.instructions
-def get_prompts(ctx: RunContext[ExecutorDeps]) -> str:
-    """Adds the list of prompts to the executor's context."""
-    res = "\n\n<prompts>\n"
-    for i, agent_prompt in enumerate(ctx.deps.prompts):
-        res += f"{i + 1}. Tool: {agent_prompt.tool}, Prompt: {agent_prompt.prompt}\n"
-    res += "</prompts>\n\n"
-    return res
+@dataclass
+class Planner(BaseNode[None, GraphDeps]):
+    user_goal: str
+    available_tools: dict[str, Tool[GraphDeps]]
+
+    async def run(self, ctx: GraphRunContext[None, GraphDeps]) -> Executor:
+        tools_str = "<available_tools>\n"
+        for tool in self.available_tools.values():
+            tools_str += f"- {tool.name}: {tool.description}\n\n"
+        tools_str += "</available_tools>"
+        user_prompt = f"<user_goal>\n{self.user_goal}\n</user_goal>\n\n{tools_str}\n\n"
+        logger.info(f"Planner received prompt: {user_prompt}")
+        plan_res = await planner_agent.run(user_prompt=user_prompt, deps=ctx.deps)
+        return Executor(user_goal=self.user_goal, prompts=plan_res.output)
+
+
+@dataclass
+class Executor(BaseNode[None, GraphDeps, str]):
+    user_goal: str
+    prompts: list[AgentPrompt]
+
+    async def run(self, ctx: GraphRunContext[None, GraphDeps]) -> End[str]:
+        prompts_str = "<prompts>\n"
+        for i, agent_prompt in enumerate(self.prompts):
+            prompts_str += f"{i + 1}. Tool: {agent_prompt.tool}, Prompt: {agent_prompt.prompt}\n"
+        prompts_str += "</prompts>"
+        user_prompt = f"<user_goal>\n{self.user_goal}\n</user_goal>\n\n{prompts_str}\n\n"
+        logger.info(f"Executor received prompt: {user_prompt}")
+        message_history = None
+        while True:
+            run = await executor_agent.run(user_prompt=user_prompt, deps=ctx.deps, message_history=message_history)
+            if isinstance(run.output, Success):
+                return End(run.output.message)
+            message_history = run.all_messages()
+            user_goal = input(f"{run.output}:  ")
+            if user_goal == "q":
+                return End(run.output)
 
 
 async def main():
-    user_data = UserData(name="hamza", location="london")
-    planner_deps = PlannerDeps.from_agent(user_data=user_data, agent=executor_agent)
+    graph = Graph(nodes=[Planner, Executor])
+    graph_deps = GraphDeps(name="hamza", location="london")
 
-    user_goal = f"Tell me the weather in {user_data.location} and my age."
+    user_goal = "Tell me the weather and my age."
 
     logger.info(f"User Goal: {user_goal}")
 
-    plan_result = await planner_agent.run(user_prompt=user_goal, deps=planner_deps)
-    logger.info(f"Planner Messages: {plan_result.all_messages()}")
-
-    agent_prompts: list[AgentPrompt] = plan_result.output
-    logger.info(f"Planner generated prompts: {agent_prompts}")
-
-    message_history = None
-    while True:
-        executor_deps = ExecutorDeps(user_data=user_data, prompts=agent_prompts)
-        run = await executor_agent.run(user_prompt=user_goal, deps=executor_deps, message_history=message_history)
-        if isinstance(run.output, Success):
-            return run.output.message
-        message_history = run.all_messages()
-        user_goal = input(f"{run.output}:  ")
-        if user_goal == "q":
-            return run.output
+    res = await graph.run(
+        start_node=Planner(user_goal=user_goal, available_tools=executor_agent._function_tools), deps=graph_deps
+    )
+    return res.output
 
 
 if __name__ == "__main__":

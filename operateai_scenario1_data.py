@@ -23,7 +23,16 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 GEOGRAPHY_WEIGHTS = {"North America": 0.60, "Europe": 0.25, "Asia-Pacific": 0.15}
 INDUSTRY_WEIGHTS = {"Tech": 0.35, "Healthcare": 0.25, "Retail": 0.20, "Education": 0.10, "Other": 0.10}
 CUSTOMER_TYPE_WEIGHTS = {"SMBs": 0.70, "Mid-Market": 0.25, "Enterprise": 0.05}
-ACQUISITION_CHANNEL_WEIGHTS = {"Paid Ads": 0.50, "Organic Search": 0.30, "Email Campaigns": 0.20}
+
+
+# Weights for customer acquisition by channel
+ACQUISITION_CHANNEL_WEIGHTS = {
+    "Paid Search": 0.30,
+    "Social Media": 0.25,
+    "Email": 0.20,
+    "Affiliate": 0.15,
+    "Content": 0.10,
+}
 
 # --- Generate Customers ---
 customers_data = []
@@ -265,13 +274,10 @@ print(f"Generated {len(orders_df)} order records (incl. recurring) and saved to 
 # --- Marketing Spend Configuration ---
 MARKETING_CHANNELS_SPEND = {
     "Paid Search": {"base_monthly": 5000, "variability": 0.2},  # Base spend $5k +/- 20%
-    "Social Media Ads": {"base_monthly": 3000, "variability": 0.25},  # Base spend $3k +/- 25%
-    "Email Marketing": {"base_monthly": 500, "variability": 0.1},  # Base spend $500 +/- 10% (platform costs etc.)
-    "Affiliate Marketing": {"base_monthly": 1000, "variability": 0.3},  # Base spend $1k +/- 30% (commissions vary)
-    "Content Marketing": {
-        "base_monthly": 1500,
-        "variability": 0.15,
-    },  # Base spend $1.5k +/- 15% (freelancers, tools)
+    "Social Media": {"base_monthly": 3000, "variability": 0.25},  # Base spend $3k +/- 25%
+    "Email": {"base_monthly": 500, "variability": 0.1},  # Base spend $500 +/- 10% (platform costs etc.)
+    "Affiliate": {"base_monthly": 1000, "variability": 0.3},  # Base spend $1k +/- 30% (commissions vary)
+    "Content": {"base_monthly": 1500, "variability": 0.15},
 }
 # Simulate slight growth in marketing budget over time
 ANNUAL_BUDGET_GROWTH_RATE = 0.10  # 10% increase per year
@@ -300,11 +306,7 @@ while current_month_date < END_DATE:
         spend = max(0, spend)
 
         marketing_spend_data.append(
-            {
-                "Date": current_month_date.strftime("%Y-%m-%d"),  # Record spend for the start of the month
-                "Channel": channel,
-                "Spend": round(spend, 2),
-            }
+            {"Date": current_month_date.strftime("%Y-%m-%d"), "Channel": channel, "Spend": round(spend, 2)}
         )
 
     # Move to the next month

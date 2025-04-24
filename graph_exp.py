@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime
-from typing import TypeVar
+from datetime import date, datetime
+from typing import Literal, TypeVar
 
 import nest_asyncio
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import Tool
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
@@ -18,14 +18,15 @@ load_dotenv()
 
 MODEL = "google-gla:gemini-2.0-flash"
 
-OutputT = TypeVar("OutputT")
+SuccessT = TypeVar("SuccessT")
+UntilSuccessT = TypeVar("UntilSuccessT")
 
 
 class Success(BaseModel):
     message: str
 
 
-AgentOutput = OutputT | Success
+AgentOutputT = UntilSuccessT | SuccessT
 
 
 class AgentPrompt(BaseModel):
@@ -35,102 +36,184 @@ class AgentPrompt(BaseModel):
 
 @dataclass
 class GraphDeps:
-    name: str
-    location: str
-
-    def __str__(self) -> str:
-        return f"<user_name>\n{self.name}\n</user_name>\n<user_location>\n{self.location}\n</user_location>"
+    available_tools: dict[str, Tool[GraphDeps]]
 
 
-user_info_agent = Agent(
-    name="user_info_agent",
+AnalysisType = Literal[
+    "Cohort Analysis",
+    "Customer LTV",
+    "CAC Analysis",
+    "Payback Model",
+    "Retention & Churn Analysis",
+    "Marketing Efficiency",
+    "Other",
+]
+
+SegmentationDimension = Literal[
+    "Acquisition Month",
+    "Geography",
+    "Industry Segment",
+    "Customer Type",
+    "Acquisition Channel",
+    "Product Tier",
+    "Subscription Type",
+    "Lead Source",
+    "Time Period",
+]
+
+
+class TimePeriod(BaseModel):
+    """Defines the time period for the analysis."""
+
+    start_date: date | None = Field(None, description="Start date for the analysis period.")
+    end_date: date | None = Field(None, description="End date for the analysis period.")
+    relative_period: str | None = Field(None, description="Relative time period (e.g., 'Last Quarter', 'YTD').")
+
+
+class AnalyticalTask(BaseModel):
+    """
+    Represents the user's goal for a financial or data analysis task,
+    gathered through interaction before planning and execution.
+
+    This model structure helps ensure all necessary components for
+    analysis are captured systematically.
+    """
+
+    goal_description: str = Field(
+        ...,
+        description="High-level description of what the user wants to achieve, captured from initial interaction.",
+    )
+    analysis_type: AnalysisType = Field(
+        ..., description="The primary type of analysis requested (e.g., LTV, Cohort)."
+    )
+    specific_metrics: list[str] = Field(
+        default_factory=list,
+        description="Specific metrics the user is interested in (e.g., 'Monthly Recurring Revenue', 'Churn Rate'). Allows for precise targeting.",
+    )
+    segmentation_dimensions: list[SegmentationDimension] = Field(
+        default_factory=list,
+        description="How the data should be segmented or grouped (e.g., 'Geography', 'Product Tier'). Enables multi-dimensional analysis.",
+    )
+    time_period: TimePeriod | None = Field(
+        None, description="The time frame relevant for the analysis (e.g., specific dates, relative periods)."
+    )
+    additional_context: list[str] = Field(
+        default_factory=list,
+        description="Any other relevant context or specific instructions from the user (e.g., specific assumptions, formatting requests).",
+    )
+
+
+financial_data_agent = Agent(
+    name="financial_data_agent",
     model=MODEL,
     deps_type=GraphDeps,
-    instructions="Use the tools at your disposal to fetch user info based on the prompt.",
+    instructions="Use the tools at your disposal to fetch specific financial data points based on the prompt.",
 )
 
 
-@user_info_agent.tool_plain
-def get_user_age(name: str) -> int:
+@financial_data_agent.tool_plain
+def get_company_revenue(company_name: str) -> float:
     """
-    Returns the age of the user specified by name.
+    Returns the annual revenue for the specified company in USD millions.
     """
-    logger.info(f"Getting age for {name=}")
-    age_dict = {"hamza": 29, "rafay": 26}
-    return age_dict.get(name, 0)
+    logger.info(f"Getting revenue for {company_name=}")
+    revenue_dict = {"Cloud Pro": 150.5, "Tech Solutions": 75.2, "DefaultCorp": 10.0}
+    return revenue_dict.get(company_name, 5.0)
 
 
-@user_info_agent.tool_plain
-def get_user_location(name: str) -> str:
+@financial_data_agent.tool_plain
+def get_stock_price(ticker: str) -> float:
     """
-    Returns the location of the user specified by name.
+    Returns the current stock price for the given ticker symbol.
     """
-    logger.info(f"Getting location for {name=}")
-    location_dict = {"hamza": "london", "rafay": "paris"}
-    return location_dict.get(name, "Unknown")
+    logger.info(f"Getting stock price for {ticker=}")
+    stock_dict = {"CLDP": 125.50, "TSOL": 88.75, "DFLT": 5.20}
+    return stock_dict.get(ticker.upper(), 1.00)
 
 
-async def get_user_info(ctx: RunContext[GraphDeps], prompt: str) -> str:
+async def get_financial_data(ctx: RunContext[GraphDeps], prompt: str) -> str:
     """
-    Processes the given prompt to retrieve user information (age or location).
-    Use this tool if the required agent prompt targets user information.
+    Processes the given prompt to retrieve specific financial data (e.g., revenue, stock price).
+    Use this tool if the required agent prompt targets specific financial data points.
 
     Args:
         ctx: The graph context.
-        prompt: The prompt describing what user info is needed and for whom.
+        prompt: The prompt describing what financial data is needed.
 
     Returns:
-        str: The requested user information or an error message.
+        str: The requested financial data or an error message.
     """
-    logger.info(f"User Info Agent received prompt: {prompt}")
-    res = await user_info_agent.run(user_prompt=prompt, deps=ctx.deps)
+    logger.info(f"Financial Data Agent received prompt: {prompt}")
+    res = await financial_data_agent.run(user_prompt=prompt, deps=ctx.deps)
     return res.output
 
 
-weather_agent = Agent(
-    name="weather_agent",
+market_analysis_agent = Agent(
+    name="market_analysis_agent",
     model=MODEL,
     deps_type=GraphDeps,
-    instructions="Use the tools at your disposal to fetch weather info based on the prompt.",
+    instructions="Use the tools at your disposal to perform market analysis based on the prompt.",
 )
 
 
-@weather_agent.tool_plain
-def get_current_weather(location: str) -> str:
+@market_analysis_agent.tool_plain
+def get_market_trend(sector: str) -> str:
     """
-    Returns the current weather condition for the given location.
+    Returns a market trend analysis for the given sector.
     """
-    logger.info(f"Getting weather for {location=}")
-    weather_dict = {"london": "sunny", "paris": "rainy"}
-    return weather_dict.get(location.lower(), "Unknown weather")
+    logger.info(f"Getting market trend for {sector=}")
+    trends = {
+        "Tech": "Positive growth driven by AI adoption.",
+        "Healthcare": "Stable growth with focus on telemedicine.",
+        "Retail": "Mixed outlook, e-commerce focus essential.",
+        "SaaS": "Strong growth, increasing competition.",
+    }
+    return trends.get(sector, "General market conditions are stable.")
 
 
-@weather_agent.tool_plain
-def get_temperature(location: str) -> float:
+@market_analysis_agent.tool_plain
+def get_competitor_analysis(company_name: str) -> str:
     """
-    Returns the temperature in Celsius for the given location.
+    Returns a competitor analysis for the specified company.
     """
-    logger.info(f"Getting temperature for {location=}")
-    temp_dict = {"london": 18.5, "paris": 22.0, "new york": 25.5}
-    return temp_dict.get(location.lower(), 0.0)
+    logger.info(f"Getting competitor analysis for {company_name=}")
+    analysis = {
+        "Cloud Pro": "Competes with major cloud providers and niche SaaS tools. Key differentiator is ease of use.",
+        "Tech Solutions": "Faces competition from established IT consultancies. Focuses on mid-market segment.",
+    }
+    return analysis.get(company_name, "Primary competitors are established players in the relevant sector.")
 
 
-async def get_weather(ctx: RunContext[GraphDeps], prompt: str) -> str:
+async def get_market_analysis(ctx: RunContext[GraphDeps], prompt: str) -> str:
     """
-    Processes the given prompt to retrieve weather information (condition or temperature).
-    Use this tool if the required agent prompt targets weather information.
+    Processes the given prompt to retrieve market analysis (e.g., trends, competitor info).
+    Use this tool if the required agent prompt targets market analysis.
 
     Args:
         ctx: The graph context.
-        prompt: The prompt describing what weather info is needed and for where.
+        prompt: The prompt describing what market analysis is needed.
 
     Returns:
-        str: The requested weather information or an error message.
+        str: The requested market analysis or an error message.
     """
-    logger.info(f"Weather Agent received prompt: {prompt}")
-    # Pass the prompt directly to the weather_agent
-    res = await weather_agent.run(user_prompt=prompt, deps=ctx.deps)
+    logger.info(f"Market Analysis Agent received prompt: {prompt}")
+    res = await market_analysis_agent.run(user_prompt=prompt, deps=ctx.deps)
     return res.output
+    
+
+task_info_agent = Agent(
+    name="task_info_agent",
+    model=MODEL,
+    deps_type=GraphDeps,
+    instructions=(
+        "Engage the user in a natural, friendly conversation to understand their analytical request. "
+        "The user might be non-technical (e.g., a CEO or manager), so use clear, simple language and avoid jargon. "
+        "Ask clarifying questions as needed. Your internal goal is to gather all necessary details to construct a complete `AnalyticalTask` object. "
+        "**Crucially, do not reveal this technical goal or mention 'AnalyticalTask' or data structures to the user.** "
+        "Focus on making the interaction feel like talking to a helpful human assistant who wants to understand their needs thoroughly."
+    ),
+    output_type=AgentOutputT[str, AnalyticalTask],
+)
 
 
 planner_agent = Agent(
@@ -138,7 +221,7 @@ planner_agent = Agent(
     model=MODEL,
     deps_type=GraphDeps,
     instructions=(
-        "Based on the user's overall goal, create a list of prompts for specialized agents.\n"
+        "Based on the user's analytical task, create a list of prompts for specialized agents.\n"
         "Each item in the list should be an 'AgentPrompt' containing:\n"
         "- prompt: A specific instruction or question for a specialized agent.\n"
         "- tool: The name of the single tool (which represents an agent) that can best handle that prompt.\n"
@@ -155,7 +238,7 @@ executor_agent = Agent(
     model=MODEL,
     deps_type=GraphDeps,
     instructions=(
-        "You will receive an overall goal and a list of specific prompts targeted at different tools/agents.\n"
+        "You will receive an analytical task and a list of specific prompts targeted at different tools/agents.\n"
         "Execute the prompts sequentially using the specified tool for each.\n"
         "You may add relevant data/context from completed tasks to subsequent prompts as needed.\n"
         "Pass the 'prompt' from the AgentPrompt object to the corresponding tool, "
@@ -164,38 +247,58 @@ executor_agent = Agent(
         "Once all prompts are executed, synthesize the results and return a final answer in a `Success` object.\n"
         "Use the results from previous steps if needed for subsequent prompts."
     ),
-    output_type=AgentOutput[str],
-    tools=[get_user_info, get_weather],
+    output_type=AgentOutputT[str, Success],
+    tools=[get_financial_data, get_market_analysis],
 )
 
 
-@user_info_agent.instructions
-@weather_agent.instructions
+@financial_data_agent.instructions
+@market_analysis_agent.instructions
 @executor_agent.instructions
 @planner_agent.instructions
+@task_info_agent.instructions
 def user_data_context(ctx: RunContext[GraphDeps]) -> str:
     return f"\n\n{ctx.deps}\n\n<current_time>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</current_time>\n\n"
 
 
 @dataclass
+class TaskInfoNode(BaseNode[None, GraphDeps]):
+    user_prompt: str
+
+    async def run(self, ctx: GraphRunContext[None, GraphDeps]) -> Planner:
+        logger.info(f"TaskInfoNode received prompt: {self.user_prompt}")
+        message_history = None
+        while True:
+            run = await task_info_agent.run(
+                user_prompt=self.user_prompt, deps=ctx.deps, message_history=message_history
+            )
+            if isinstance(run.output, AnalyticalTask):
+                return Planner(analytical_task=run.output)
+            else:
+                self.user_prompt = input(f"{run.output}: ")
+                message_history = run.all_messages()
+
+
+@dataclass
 class Planner(BaseNode[None, GraphDeps]):
-    user_goal: str
-    available_tools: dict[str, Tool[GraphDeps]]
+    analytical_task: AnalyticalTask
 
     async def run(self, ctx: GraphRunContext[None, GraphDeps]) -> Executor:
         tools_str = "<available_tools>\n"
-        for tool in self.available_tools.values():
+        for tool in ctx.deps.available_tools.values():
             tools_str += f"- {tool.name}: {tool.description}\n\n"
         tools_str += "</available_tools>"
-        user_prompt = f"<user_goal>\n{self.user_goal}\n</user_goal>\n\n{tools_str}\n\n"
+        user_prompt = (
+            f"<analytical_task>\n{self.analytical_task.model_dump_json()}\n</analytical_task>\n\n{tools_str}\n\n"
+        )
         logger.info(f"Planner received prompt: {user_prompt}")
         plan_res = await planner_agent.run(user_prompt=user_prompt, deps=ctx.deps)
-        return Executor(user_goal=self.user_goal, prompts=plan_res.output)
+        return Executor(analytical_task=self.analytical_task, prompts=plan_res.output)
 
 
 @dataclass
 class Executor(BaseNode[None, GraphDeps, str]):
-    user_goal: str
+    analytical_task: AnalyticalTask
     prompts: list[AgentPrompt]
 
     async def run(self, ctx: GraphRunContext[None, GraphDeps]) -> End[str]:
@@ -203,7 +306,9 @@ class Executor(BaseNode[None, GraphDeps, str]):
         for i, agent_prompt in enumerate(self.prompts):
             prompts_str += f"{i + 1}. Tool: {agent_prompt.tool}, Prompt: {agent_prompt.prompt}\n"
         prompts_str += "</prompts>"
-        user_prompt = f"<user_goal>\n{self.user_goal}\n</user_goal>\n\n{prompts_str}\n\n"
+        user_prompt = (
+            f"<analytical_task>\n{self.analytical_task.model_dump_json()}\n</analytical_task>\n\n{prompts_str}\n\n"
+        )
         logger.info(f"Executor received prompt: {user_prompt}")
         message_history = None
         while True:
@@ -217,16 +322,14 @@ class Executor(BaseNode[None, GraphDeps, str]):
 
 
 async def main():
-    graph = Graph(nodes=[Planner, Executor])
-    graph_deps = GraphDeps(name="hamza", location="london")
+    graph = Graph(nodes=[TaskInfoNode, Planner, Executor])
+    graph_deps = GraphDeps(available_tools=executor_agent._function_tools)
 
-    user_goal = "Tell me the weather and my age."
+    user_prompt = "Get the company revenue and competitor analysis of 'Tech Solutions'"
 
-    logger.info(f"User Goal: {user_goal}")
+    logger.info(f"User Prompt: {user_prompt}")
 
-    res = await graph.run(
-        start_node=Planner(user_goal=user_goal, available_tools=executor_agent._function_tools), deps=graph_deps
-    )
+    res = await graph.run(start_node=TaskInfoNode(user_prompt=user_prompt), deps=graph_deps)
     return res.output
 
 

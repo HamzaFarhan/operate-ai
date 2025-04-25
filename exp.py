@@ -1,22 +1,31 @@
 from datetime import datetime
 
-from dotenv import load_dotenv
 from pydantic_ai import Agent
-
-load_dotenv()
 
 MODEL = "google-gla:gemini-2.0-flash"
 
-agent = Agent(model=MODEL)
+# INSTEAD OF THIS
+
+joker_agent = Agent(name="joker_agent", model=MODEL, instructions="you write jokes")
+poet_agent = Agent(name="poet_agent", model=MODEL, instructions="you write poetry")
 
 
-@agent.instructions
-def add_today_date() -> str:
-    return f"\n<today_date>{datetime.now().strftime('%Y-%m-%d')}</today_date>\n\n"
+@joker_agent.instructions
+@poet_agent.instructions
+def add_current_time() -> str:
+    return f"\n\n<current_time>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</current_time>\n\n"
 
 
-user_prompt = "Tell me an interesting fact about today's date throughout history."
+# I WANT THIS
 
-res = agent.run_sync(user_prompt=user_prompt)
 
-print(res.output)
+def add_current_time_instructions() -> str:
+    return f"\n\n<current_time>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</current_time>\n\n"
+
+
+joker_agent = Agent(
+    name="joker_agent", model=MODEL, instructions=("you write jokes", add_current_time_instructions)
+)
+poet_agent = Agent(
+    name="poet_agent", model=MODEL, instructions=("you write poetry", add_current_time_instructions)
+)

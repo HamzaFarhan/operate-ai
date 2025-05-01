@@ -1,4 +1,5 @@
 from textwrap import dedent
+from typing import Literal
 
 THINKING_INSTRUCTIONS = dedent(
     """\
@@ -22,7 +23,7 @@ THINKING_INSTRUCTIONS = dedent(
 )
 
 THINKING_FEW_SHOT_EXAMPLES = dedent(
-    """
+    """\
     Below are examples demonstrating how to use the `think` and `analyze` tools.
 
     ### Examples
@@ -99,6 +100,8 @@ THINKING_FEW_SHOT_EXAMPLES = dedent(
     The capital of France is Paris. Its estimated population (city proper) is approximately 2.1 million as of early 2024."""
 )
 
+NextAction = Literal["continue", "validate", "final_answer"]
+
 
 def think(title: str, thought: str, action: str | None = None, confidence: float = 0.8) -> str:
     """Use this tool as a scratchpad to reason about the question and work through it step-by-step.
@@ -114,6 +117,7 @@ def think(title: str, thought: str, action: str | None = None, confidence: float
     Returns:
         A list of previous thoughts and the new thought
     """
+    confidence = min(1.0, max(0.0, confidence))
     thought = f"<thought>\n\n<title>\n{title}\n</title>\n<thought>\n{thought}\n</thought>\n"
     if action is not None:
         thought += f"<action>\n{action}\n</action>\n"
@@ -122,7 +126,9 @@ def think(title: str, thought: str, action: str | None = None, confidence: float
     return thought
 
 
-def analyze(title: str, result: str, analysis: str, next_action: str = "continue", confidence: float = 0.8) -> str:
+def analyze(
+    title: str, result: str, analysis: str, next_action: NextAction = "continue", confidence: float = 0.8
+) -> str:
     """Use this tool to analyze results from a reasoning step and determine next actions.
 
     Args:
@@ -135,6 +141,7 @@ def analyze(title: str, result: str, analysis: str, next_action: str = "continue
     Returns:
         A list of previous thoughts and the new analysis
     """
+    confidence = min(1.0, max(0.0, confidence))
     analysis = (
         f"<analysis>\n\n"
         f"<title>\n{title}\n</title>\n"

@@ -276,7 +276,8 @@ planner_agent = Agent(
         "Each item in the list should be an 'AgentPrompt' containing:\n"
         "- prompt: A specific instruction or question for a specialized agent.\n"
         "- tool: The name of the single tool (which represents an agent) that can best handle that prompt.\n"
-        "Your plan will be given to an executor agent that routes the prompts to the correct tool/agent.\n"
+        "Your plan will be given to an executor agent that routes the prompts to the correct tool/agent. "
+        "The plan should be coherent and cover all aspects of information from the user's analytical task.\n"
         "Refer to the <available_tools> list to know which tools/agents the executor has access to.\n"
         "Do not try to execute the prompts yourself. Just create the list of AgentPrompt objects."
     ),

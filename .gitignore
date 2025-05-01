@@ -14,3 +14,4 @@ wheels/
 *.zip
 
 operateai_scenario1_data
+.DS_Store

@@ -7,14 +7,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
 
+import duckdb
 import pandas as pd
 from dotenv import load_dotenv
+from loguru import logger
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import Tool
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
-from rich.panel import Panel
-from rich.prompt import Prompt
 
 load_dotenv()
 
@@ -29,7 +29,7 @@ UntilSuccessT = TypeVar("UntilSuccessT")
 
 
 class Success(BaseModel):
-    message: str
+    value: str
 
 
 AgentOutputT = UntilSuccessT | SuccessT
@@ -78,6 +78,18 @@ def list_available_tools(ctx: RunContext[GraphDeps]) -> str:
     return tools_str.strip()
 
 
+def run_sql(query: str) -> list[dict[str, str]]:
+    """
+    Runs a SQL query on csv file(s) using duckdb and returns the results as a list of dictionaries.
+    In the query, include the path to the csv file in single quotes.
+    It will return the result by doing a to_df() and then to_dict(orient="records")
+
+    Example Query:
+    SELECT * FROM 'full_path_to_csv_file.csv'
+    """
+    return duckdb.sql(query).to_df().to_dict(orient="records")
+
+
 class TaskSpec(BaseModel):
     goal: str = Field(..., description="One clear sentence describing the deliverable.")
     slots: list[str] = Field(
@@ -109,7 +121,7 @@ slot_collector_agent = Agent(
     model=MODEL,
     deps_type=GraphDeps,
     instructions=((Path(PROMPTS_DIR) / "collect_slots.md").read_text(), add_current_time, list_csv_files),
-    output_type=Slot,
+    output_type=AgentOutputT[str, Slot],
 )
 
 planner_agent = Agent(
@@ -132,49 +144,69 @@ executor_agent = Agent(
     deps_type=GraphDeps,
     instructions=((Path(PROMPTS_DIR) / "executor.md").read_text(), add_current_time, list_csv_files),
     output_type=AgentOutputT[str, Success],
+    tools=[run_sql],
 )
 
 
 @dataclass
 class TaskSpecExtractor(BaseNode[None, GraphDeps]):
+    """Extracts task goal and identifies missing information slots from initial finance request"""
+
+    docstring_notes = True
     user_prompt: str
 
     async def run(self, ctx: GraphRunContext[None, GraphDeps]) -> SlotCollector:
+        logger.info(f"Prompt for task spec agent: {self.user_prompt}")
         run = await task_spec_agent.run(user_prompt=self.user_prompt, deps=ctx.deps)
         return SlotCollector(task_spec=run.output)
 
 
 @dataclass
 class SlotCollector(BaseNode[None, GraphDeps]):
+    """Collects values for all missing information slots through user conversation"""
+
+    docstring_notes = True
     task_spec: TaskSpec
 
     async def run(self, ctx: GraphRunContext[None, GraphDeps]) -> Planner:
         slots = []
-        message_history = None
         for slot in self.task_spec.slots:
-            run = await slot_collector_agent.run(
-                user_prompt=f"<goal>\n{self.task_spec.goal}\n</goal>\n\n<slot>\n{slot}\n</slot>",
-                deps=ctx.deps,
-                message_history=message_history,
-            )
-            slots.append(run.output)
-            message_history = run.all_messages()
+            user_prompt = f"<goal>\n{self.task_spec.goal}\n</goal>\n\n<slot>\n{slot}\n</slot>"
+            if slots:
+                user_prompt += f"\n\nAlready collected slots:\n{slots}"
+            message_history = None
+            while True:
+                logger.info(f"Prompt for slot collector agent: {user_prompt}")
+                run = await slot_collector_agent.run(
+                    user_prompt=user_prompt, deps=ctx.deps, message_history=message_history
+                )
+                if isinstance(run.output, Slot):
+                    slots.append(run.output)
+                    break
+                user_prompt = input(f"{run.output} > ")
+                message_history = run.all_messages()
         return Planner(task=Task(goal=self.task_spec.goal, slots=slots))
 
 
 @dataclass
 class Planner(BaseNode[None, GraphDeps]):
+    """Converts fully specified task into ordered execution plan of tool steps"""
+
+    docstring_notes = True
     task: Task
 
     async def run(self, ctx: GraphRunContext[None, GraphDeps]) -> Executor:
-        plan_res = await planner_agent.run(
-            user_prompt=f"<task>\n{self.task.model_dump_json()}\n</task>", deps=ctx.deps
-        )
+        user_prompt = f"<task>\n{self.task.model_dump_json()}\n</task>"
+        logger.info(f"Prompt for planner agent: {user_prompt}")
+        plan_res = await planner_agent.run(user_prompt=user_prompt, deps=ctx.deps)
         return Executor(task=self.task, prompts=plan_res.output)
 
 
 @dataclass
 class Executor(BaseNode[None, GraphDeps, str]):
+    """Executes ordered plan steps and synthesizes results into final answer"""
+
+    docstring_notes = True
     task: Task
     prompts: list[AgentPrompt]
 
@@ -183,52 +215,32 @@ class Executor(BaseNode[None, GraphDeps, str]):
         for i, agent_prompt in enumerate(self.prompts):
             prompts_str += f"{i + 1}. Tool: {agent_prompt.tool}, Prompt: {agent_prompt.prompt}\n"
         prompts_str += "</prompts>"
-        user_prompt = (
-            f"<task>\n{self.task.model_dump_json()}\n</task>\n\n{prompts_str}\n\n"
-        )
-        console.print(
-            Panel(
-                f"[info]Executor received prompt:\n[bold]{user_prompt}[/bold][/info]",
-                title="Internal Log",
-                border_style="dim blue",
-            )
-        )
+        user_prompt = f"<task>\n{self.task.model_dump_json()}\n</task>\n\n{prompts_str}"
         message_history = None
         while True:
+            logger.info(f"Prompt for executor agent: {user_prompt}")
             run = await executor_agent.run(user_prompt=user_prompt, deps=ctx.deps, message_history=message_history)
             if isinstance(run.output, Success):
-                return End(run.output.message)
+                return End(run.output.value)
             message_history = run.all_messages()
-            console.print(Panel(f"[ai]{run.output}[/ai]", title="AI Message", border_style="magenta"))
-            user_goal = Prompt.ask("[user]Your response[/user]", console=console)
-            if user_goal == "q":
+            user_prompt = input(f"{run.output} > ")
+            if user_prompt == "q":
                 return End(run.output)
 
 
+cfo_graph = Graph(nodes=[TaskSpecExtractor, SlotCollector, Planner, Executor])
+cfo_graph.mermaid_save("cfo_graph.jpg", direction="LR")
+
+
 async def main():
-    graph = Graph(nodes=[TaskInfoNode, Planner, Executor])
-    graph_deps = GraphDeps(available_tools=executor_agent._function_tools)
-    # first_prompt = "Get the company revenue and competitor analysis of 'Tech Solutions'"
-
-    # Display welcome message
-    console.print(
-        Panel(
-            "[ai]Welcome to OperateAI![/ai]",
-            title="AI Assistant",
-            border_style="magenta",
-        )
+    graph_deps = GraphDeps(data_dir=DATA_DIR, available_tools=executor_agent._function_tools)
+    # Give me the total profit for all orders in 2023
+    res = await cfo_graph.run(
+        start_node=TaskSpecExtractor(user_prompt=input("Analytical Task: ")), deps=graph_deps
     )
-
-    # Get user input with rich prompt
-    user_prompt = Prompt.ask("[user]What can I help you with?[/user]", console=console)
-
-    # Log user input with rich panel
-    console.print(Panel(f"[user]{user_prompt}[/user]", title="User Request", border_style="green"))
-
-    res = await graph.run(start_node=TaskInfoNode(user_prompt=user_prompt), deps=graph_deps)
     return res.output
 
 
 if __name__ == "__main__":
     res = asyncio.run(main())
-    console.print(Panel(f"[ai]{res}[/ai]", title="Final Result", border_style="bold magenta", padding=(1, 2)))
+    logger.success(res)

@@ -45,5 +45,5 @@ Guidelines
 • **Minimal yet sufficient**  
   Avoid redundant or cosmetic steps, but do not omit any action needed to satisfy the user’s request.
 
-• **No execution**  
-  Do **not** run or solve any step yourself—only output the ordered plan.
+• **No tool execution**  
+  You do not have direct access to run any tools. You only need to create prompts for the Executor Agent to run in the next step.

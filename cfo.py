@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from loguru import logger
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.models import KnownModelName
 from pydantic_ai.tools import Tool
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
@@ -21,7 +22,8 @@ load_dotenv()
 
 DATA_DIR = "./operateai_scenario1_data"
 PROMPTS_DIR = "./src/operate_ai/prompts"
-MODEL = "google-gla:gemini-2.0-flash"
+MODEL: KnownModelName = "google-gla:gemini-2.0-flash"
+PLANNER_MODEL: KnownModelName = "google-gla:gemini-2.5-pro-exp-03-25"
 
 
 SuccessT = TypeVar("SuccessT")
@@ -120,7 +122,7 @@ slot_collector_agent = Agent(
     name="slot_collector_agent",
     model=MODEL,
     deps_type=GraphDeps,
-    instructions=((Path(PROMPTS_DIR) / "collect_slots.md").read_text(), add_current_time, list_csv_files),
+    instructions=((Path(PROMPTS_DIR) / "slot_collector.md").read_text(), add_current_time, list_csv_files),
     output_type=AgentOutputT[str, Slot],
 )
 
@@ -144,7 +146,7 @@ executor_agent = Agent(
     deps_type=GraphDeps,
     instructions=((Path(PROMPTS_DIR) / "executor.md").read_text(), add_current_time, list_csv_files),
     output_type=AgentOutputT[str, Success],
-    tools=[run_sql],
+    tools=[Tool(run_sql, max_retries=5)],
 )
 
 
@@ -183,7 +185,17 @@ class SlotCollector(BaseNode[None, GraphDeps]):
                 if isinstance(run.output, Slot):
                     slots.append(run.output)
                     break
-                user_prompt = input(f"{run.output} > ")
+                if run.output.strip().startswith("Slot("):
+                    user_prompt = "Return the Slot object with the name and value. Not a string."
+                else:
+                    user_prompt = input(f"{run.output.strip()} > ")
+                if user_prompt.lower() == "q":
+                    user_prompt = (
+                        "This is dragging on too long. "
+                        "Just return a Slot object with the name and value "
+                        "based on our conversation so far. Or, come up with a value on your own.\n"
+                        "I trust you."
+                    )
                 message_history = run.all_messages()
         return Planner(task=Task(goal=self.task_spec.goal, slots=slots))
 
@@ -224,7 +236,7 @@ class Executor(BaseNode[None, GraphDeps, str]):
                 return End(run.output.value)
             message_history = run.all_messages()
             user_prompt = input(f"{run.output} > ")
-            if user_prompt == "q":
+            if user_prompt.lower() == "q":
                 return End(run.output)
 
 
@@ -234,10 +246,10 @@ cfo_graph.mermaid_save("cfo_graph.jpg", direction="LR")
 
 async def main():
     graph_deps = GraphDeps(data_dir=DATA_DIR, available_tools=executor_agent._function_tools)
-    # Give me the total profit for all orders in 2023
-    res = await cfo_graph.run(
-        start_node=TaskSpecExtractor(user_prompt=input("Analytical Task: ")), deps=graph_deps
-    )
+    user_prompt = input("Analytical Task: ")
+    if Path(user_prompt).exists():
+        user_prompt = Path(user_prompt).read_text()
+    res = await cfo_graph.run(start_node=TaskSpecExtractor(user_prompt=user_prompt), deps=graph_deps)
     return res.output
 
 

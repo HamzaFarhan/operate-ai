@@ -99,6 +99,10 @@ class TaskSpec(BaseModel):
     )
 
 
+class Question(BaseModel):
+    question: str
+
+
 class Slot(BaseModel):
     name: str
     value: str
@@ -107,6 +111,10 @@ class Slot(BaseModel):
 class Task(BaseModel):
     goal: str
     slots: list[Slot]
+
+
+class Progress(BaseModel):
+    progress: str
 
 
 task_spec_agent = Agent(
@@ -123,7 +131,7 @@ slot_collector_agent = Agent(
     model=MODEL,
     deps_type=GraphDeps,
     instructions=((Path(PROMPTS_DIR) / "slot_collector.md").read_text(), add_current_time, list_csv_files),
-    output_type=AgentOutputT[str, Slot],
+    output_type=AgentOutputT[Question, Slot],
 )
 
 planner_agent = Agent(
@@ -145,7 +153,7 @@ executor_agent = Agent(
     model=MODEL,
     deps_type=GraphDeps,
     instructions=((Path(PROMPTS_DIR) / "executor.md").read_text(), add_current_time, list_csv_files),
-    output_type=AgentOutputT[str, Success],
+    output_type=AgentOutputT[Progress, Success],
     tools=[Tool(run_sql, max_retries=5)],
 )
 
@@ -185,10 +193,8 @@ class SlotCollector(BaseNode[None, GraphDeps]):
                 if isinstance(run.output, Slot):
                     slots.append(run.output)
                     break
-                if run.output.strip().startswith("Slot("):
-                    user_prompt = "Return the Slot object with the name and value. Not a string."
-                else:
-                    user_prompt = input(f"{run.output.strip()} > ")
+
+                user_prompt = input(f"{run.output.question.strip()} > ")
                 if user_prompt.lower() == "q":
                     user_prompt = (
                         "This is dragging on too long. "
@@ -235,9 +241,9 @@ class Executor(BaseNode[None, GraphDeps, str]):
             if isinstance(run.output, Success):
                 return End(run.output.value)
             message_history = run.all_messages()
-            user_prompt = input(f"{run.output} > ")
+            user_prompt = input(f"{run.output.progress} > ")
             if user_prompt.lower() == "q":
-                return End(run.output)
+                return End("User quit")
 
 
 cfo_graph = Graph(nodes=[TaskSpecExtractor, SlotCollector, Planner, Executor])

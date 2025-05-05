@@ -7,7 +7,7 @@ import pandas as pd
 from pydantic_ai import RunContext
 from scipy.optimize import newton, root_scalar
 
-from operate_ai.tools import AgentDeps
+from operate_ai.excel_tools import AgentDeps
 
 
 def npv_formula_tool(

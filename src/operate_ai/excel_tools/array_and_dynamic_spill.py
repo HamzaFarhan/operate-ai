@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from pydantic_ai import RunContext
 
-from operate_ai.tools import AgentDeps
+from operate_ai.excel_tools import AgentDeps
 
 
 def unique_formula_tool(ctx: RunContext[AgentDeps], df_name: str, column_name: str) -> dict[str, Any]:

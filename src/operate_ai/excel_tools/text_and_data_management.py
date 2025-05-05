@@ -4,7 +4,7 @@ from typing import Any
 import pandas as pd
 from pydantic_ai import RunContext
 
-from operate_ai.tools import AgentDeps
+from operate_ai.excel_tools import AgentDeps
 
 
 def concat_formula_tool(

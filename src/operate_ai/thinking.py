@@ -1,6 +1,8 @@
 from textwrap import dedent
 from typing import Literal
 
+from loguru import logger
+
 THINKING_INSTRUCTIONS = dedent(
     """\
     You have access to the `think` and `analyze` tools to work through problems step-by-step and structure your thought process. You must ALWAYS `think` before making a tool call or generating an answer.
@@ -104,25 +106,34 @@ NextAction = Literal["continue", "validate", "final_answer"]
 
 
 def think(title: str, thought: str, action: str | None = None, confidence: float = 0.8) -> str:
-    """Use this tool as a scratchpad to reason about the question and work through it step-by-step.
-    This tool will help you break down complex problems into logical steps and track the reasoning process.
-    You can call it as many times as needed. These internal thoughts are never revealed to the user.
+    """
+    Use this tool as a scratchpad to reason about the question and work through it step-by-step.
 
-    Args:
-        title: A concise title for this step
-        thought: Your detailed thought for this step
-        action: What you'll do based on this thought
-        confidence: How confident you are about this thought (0.0 to 1.0)
+    This tool helps break down complex problems into logical steps and track the reasoning process.
+    It can be called multiple times as needed. These internal thoughts are never revealed to the user.
 
-    Returns:
-        A list of previous thoughts and the new thought
+    Parameters
+    ----------
+    title : str
+        A concise title for this step.
+    thought : str
+        Your detailed thought for this step.
+    action : str, optional
+        What you'll do based on this thought.
+    confidence : float, default 0.8
+        How confident you are about this thought (0.0 to 1.0).
+
+    Returns
+    -------
+    str
+        A formatted string containing the thought process.
     """
     confidence = min(1.0, max(0.0, confidence))
-    thought = f"<thought>\n\n<title>\n{title}\n</title>\n<thought>\n{thought}\n</thought>\n"
+    thought = f"<thought>\n<title>\n{title}\n</title>\n<thought>\n{thought}\n</thought>\n"
     if action is not None:
         thought += f"<action>\n{action}\n</action>\n"
     thought += f"<confidence>\n{confidence}\n</confidence>\n\n</thought>\n"
-
+    logger.info(thought)
     return thought
 
 

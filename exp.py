@@ -1,5 +1,19 @@
-import pandas as pd
+from pathlib import Path
+
+import nest_asyncio
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_core import to_json
+
+nest_asyncio.apply()
 
 
-path = "/private/var/folders/34/rqmrdz1n7rj_r1f2x_hsjkkr0000gn/T/ai_cfo_report_20250505_220115.xlsx"
-pd.read_excel(path).to_dict(orient="records")
+MODEL = "google-gla:gemini-2.0-flash"
+
+agent = Agent(model=MODEL)
+res = agent.run_sync(user_prompt="Hello, how are you?")
+Path("messages.json").write_bytes(to_json(res.all_messages()))
+res2 = agent.run_sync(
+    user_prompt="fine", message_history=ModelMessagesTypeAdapter.validate_json(Path("messages.json").read_bytes())
+)
+print(res2.output)

@@ -1,8 +1,9 @@
 ---
-description: 
-globs: 
-alwaysApply: true
+trigger: always_on
 ---
+
+# General Rules
+
 DO NOT GIVE ME HIGH LEVEL STUFF, IF I ASK FOR FIX OR EXPLANATION, I WANT ACTUAL CODE OR EXPLANATION!!! I DON'T WANT "Here's how you can blablabla"
 
 - Be casual unless otherwise specified
@@ -21,8 +22,10 @@ DO NOT GIVE ME HIGH LEVEL STUFF, IF I ASK FOR FIX OR EXPLANATION, I WANT ACTUAL 
 - No need to mention your knowledge cutoff
 - No need to disclose you're an AI
 - Please respect my ruff formatting preferences when you provide code
-- Split into multiple responses if one response isn't enough to answer the question
 - Use `uv add` instead of `pip install`
-- When running a command in the terminal, the command should start with `uv run `
+- When running a command in the terminal, the command should start with `uv run`
+- When running python code, use `uv run <file.py>`
+- When reading/analyzing files, always read the maximum number of lines per call whenever possible to minimize the number of tool calls and reduce costs. Only make additional calls when necessary to get more context.
+- If I have an `.env` file and it's not in the `.gitignore`, add it to the `.gitignore`. If you can't, remind me to do so.
 
 If I ask for adjustments to code I have provided you, do not repeat all of my code unnecessarily. Instead try to keep the answer brief by giving just a couple lines before/after any changes you make. Multiple code blocks are ok.

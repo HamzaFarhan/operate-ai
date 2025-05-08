@@ -1,0 +1,1 @@
+[{"parts":[{"content":"Hello, how are you?","timestamp":"2025-05-07T23:09:50.914080Z","part_kind":"user-prompt"}],"instructions":null,"kind":"request"},{"parts":[{"content":"I am doing well, thank you for asking! How are you today?\n","part_kind":"text"}],"model_name":"gemini-2.0-flash","timestamp":"2025-05-07T23:09:51.830121Z","kind":"response"}]

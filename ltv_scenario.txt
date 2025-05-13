@@ -8,3 +8,4 @@ To calculate churn rate, use the formula (# of customers at the beginning of the
 Profit per User should only include profit generated from Jan 2023 to Dec 2023 from users who ordered during those dates.
 Customers at the start of the period should only be customers who have active subscriptions in Jan 2023. 
 Churned customers should be customers who were active subscribers between Jan 2023 and Dec 2023 and churned during that period and should not include customers who joined after Jan 2023 since we want the churn rate for customers who were active on Jan 2023 and not new customers who joined after Jan 2023.
+For each sheet, wherever possible, give me separate columns for monthly, annual and total.

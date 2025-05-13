@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import tempfile
+from collections.abc import Hashable
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Self
@@ -20,6 +21,7 @@ from pydantic_core import to_json
 logfire.configure()
 
 SQL_TIMEOUT_SECONDS = 5
+PREVIEW_ROWS = 10
 
 
 class Success(BaseModel):
@@ -51,7 +53,7 @@ def extract_csv_paths(sql_query: str) -> list[str]:
     read_csv_matches = re.findall(read_csv_pattern, sql_query, re.IGNORECASE)
 
     # Extract paths from both single and multiple CSV cases
-    paths = []
+    paths: list[Any] = []
     for single_path, multiple_paths in read_csv_matches:
         if single_path:
             paths.append(single_path)
@@ -74,14 +76,14 @@ def add_current_time() -> str:
     return f"<current_time>\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n</current_time>"
 
 
-def preview_csv(df: Path | str | pd.DataFrame, num_rows: int = 3) -> list[dict[str, str]]:
+def preview_csv(df: Path | str | pd.DataFrame, num_rows: int = PREVIEW_ROWS) -> list[dict[Hashable, Any]]:
     """
     Returns the first `num_rows` rows of the specified CSV file.
     Should be used for previewing the data.
     """
     if isinstance(df, pd.DataFrame):
-        return df.head(num_rows).to_dict(orient="records")
-    return pd.read_csv(df).head(num_rows).to_dict(orient="records")
+        return df.head(num_rows).to_dict(orient="records")  # type: ignore
+    return pd.read_csv(df).head(num_rows).to_dict(orient="records")  # type: ignore
 
 
 def list_csv_files(ctx: RunContext[GraphDeps]) -> str:
@@ -92,8 +94,8 @@ def list_csv_files(ctx: RunContext[GraphDeps]) -> str:
     res = "\n<available_csv_files>\n"
     for file in csv_files:
         res += file + "\n"
-        res += "First row for preview:\n"
-        res += json.dumps(preview_csv(df=file, num_rows=1)) + "\n\n"
+        res += f"First {PREVIEW_ROWS} rows for preview:\n"
+        res += json.dumps(preview_csv(df=file, num_rows=PREVIEW_ROWS)) + "\n\n"
     return res.strip() + "\n</available_csv_files>"
 
 
@@ -126,7 +128,7 @@ def run_sql(
     query : str
         The SQL query to execute.
     preview_rows : int, default 3
-        Number of rows to preview.
+        Number of rows to preview. 2-5 should be enough for most queries.
     file_name : str | None, default None
         Descriptive name of the file based on the query to save the result to in the `analysis_dir`.
         If None, a file path will be created in the `analysis_dir` based on the current timestamp.
@@ -156,7 +158,7 @@ def run_sql(
             logger.info(f"Found CSV files in query: {csv_paths}")
             check_csv_files_exist(csv_paths)
 
-        df = duckdb.sql(query_replaced).df()
+        df: pd.DataFrame = duckdb.sql(query_replaced).df()  # type: ignore
 
         file_path = (
             Path(ctx.deps.analysis_dir) / file_name
@@ -167,9 +169,12 @@ def run_sql(
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         df.to_csv(file_path, index=False)
+        file_path.with_suffix(".txt").write_text(query_replaced)
 
         return RunSQLResult(
-            file_path=str(file_path), preview=preview_csv(df=df, num_rows=preview_rows), row_count=len(df)
+            file_path=str(file_path),
+            preview=preview_csv(df=df, num_rows=preview_rows),  # type: ignore
+            row_count=len(df),
         )
 
     try:
@@ -229,7 +234,7 @@ def write_sheet_from_file(
     wb_path = workbook_path.expanduser().resolve().with_suffix(".xlsx")
     wb_path.parent.mkdir(parents=True, exist_ok=True)
 
-    df = pd.read_csv(Path(file_path).expanduser().resolve())
+    df: pd.DataFrame = pd.read_csv(Path(file_path).expanduser().resolve())  # type: ignore
 
     try:
         mode = "w"
@@ -238,15 +243,15 @@ def write_sheet_from_file(
             mode = "a"
             if_sheet_exists = "replace"
         with pd.ExcelWriter(wb_path, mode=mode, engine="openpyxl", if_sheet_exists=if_sheet_exists) as w:
-            df.to_excel(w, sheet_name=sheet_name[:31] or "Sheet1", index=False)
+            df.to_excel(w, sheet_name=sheet_name[:31] or "Sheet1", index=False)  # type: ignore
 
-        _ = pd.read_excel(wb_path)
+        _ = pd.read_excel(wb_path)  # type: ignore
         logger.info(f"Successfully wrote to workbook: {wb_path}")
     except Exception as e:
         logger.warning(f"Failed to write to workbook: {wb_path}")
         raise ModelRetry(
             (
-                f"Got this error when trying to read the workbook you just wrote to.\n"
+                f"Got this error when trying to read/write the workbook.\n"
                 "I have reverted the step. Try again:\n"
                 f"{str(e)}"
             )
@@ -268,16 +273,20 @@ def user_interaction(ctx: RunContext[GraphDeps], message: str) -> str:
     return res
 
 
-fallback_model = FallbackModel(
-    "openai:gpt-4.1-mini", "anthropic:claude-3-7-sonnet-latest", "openai:gpt-4.1", "google-gla:gemini-2.0-flash"
-)
+# fallback_model = FallbackModel(
+#     "anthropic:claude-3-7-sonnet-latest", "openai:gpt-4.1", "openai:gpt-4.1-mini", "google-gla:gemini-2.0-flash"
+# )
 
+fallback_model = FallbackModel(
+    "openai:gpt-4.1", "anthropic:claude-3-5-sonnet-latest", "openai:gpt-4.1-mini", "google-gla:gemini-2.0-flash"
+)
 agent = Agent(
     model=fallback_model,
-    instructions=[Path("./src/operate_ai/prompts/cfo.md").read_text(), add_current_time, add_dirs, list_csv_files],
+    instructions=[Path("./src/operate_ai/prompts/cfo2.md").read_text(), add_current_time, add_dirs],
     deps_type=GraphDeps,
-    retries=5,
+    retries=10,
     tools=[
+        list_csv_files,
         run_sql,
         write_sheet_from_file,
         user_interaction,
@@ -298,7 +307,8 @@ deps = GraphDeps(
 
 
 async def main():
-    query = Path("ltv_scenario.txt").read_text()
+    # query = Path("ltv_scenario.txt").read_text()
+    query = "How many customers joined in Jan 2023 with a monthly plan?"
     message_history_path = Path(deps.results_dir) / "message_history.json"
     while True:
         async with agent.run_mcp_servers():

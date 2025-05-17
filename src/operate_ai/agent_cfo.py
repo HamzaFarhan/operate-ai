@@ -307,13 +307,13 @@ deps = GraphDeps(
 
 
 async def main():
-    # query = Path("ltv_scenario.txt").read_text()
-    query = "How many customers joined in Jan 2023 with a monthly plan?"
+    # user_prompt = Path("ltv_scenario.txt").read_text()
+    user_prompt = "How many customers joined in Jan 2023 with a monthly plan?"
     message_history_path = Path(deps.results_dir) / "message_history.json"
     while True:
         async with agent.run_mcp_servers():
             async with agent.iter(
-                user_prompt=query,
+                user_prompt=user_prompt,
                 deps=deps,
                 message_history=ModelMessagesTypeAdapter.validate_json(message_history_path.read_bytes())
                 if message_history_path.exists()
@@ -329,8 +329,8 @@ async def main():
             break
         if not run.result:
             continue
-        query = input(f"{run.result.output} > ")
-        if query.strip().lower() == "q":
+        user_prompt = input(f"{run.result.output} > ")
+        if user_prompt.strip().lower() == "q":
             break
 
 

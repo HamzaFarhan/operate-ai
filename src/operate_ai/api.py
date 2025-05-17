@@ -14,8 +14,8 @@ DB: dict[str, dict[str, dict[str, Any]]] = {
     "workspaces": {},
     "threads": {},
     "messages": {},
-    "tasks": {},
     "results": {},
+    "files": {},
 }
 
 
@@ -52,18 +52,6 @@ class MessageOut(MessageIn):
     created_at: datetime
 
 
-class TaskIn(BaseModel):
-    name: str
-    payload: dict[str, Any] | None = None
-
-
-class TaskOut(TaskIn):
-    id: UUID
-    thread_id: UUID
-    state: str
-    created_at: datetime
-
-
 class ResultIn(BaseModel):
     filename: str
     path: str
@@ -76,7 +64,19 @@ class ResultOut(ResultIn):
     created_at: datetime
 
 
-OutModel = WorkspaceOut | ThreadOut | MessageOut | TaskOut | ResultOut
+class FileIn(BaseModel):
+    filename: str = Field(..., min_length=1)
+    mime_type: str
+    size: int = Field(..., gt=0)  # Size in bytes
+
+
+class FileOut(FileIn):
+    id: UUID
+    workspace_id: UUID
+    created_at: datetime
+
+
+OutModel = WorkspaceOut | ThreadOut | MessageOut | ResultOut | FileOut
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────────
@@ -181,40 +181,6 @@ def list_messages(th_id: UUID):
     return [m for m in DB["messages"].values() if m["thread_id"] == th_id]
 
 
-# ─── Task endpoints ─────────────────────────────────────────────────────────────
-@app.post("/threads/{th_id}/tasks", response_model=TaskOut, status_code=201)
-def create_task(th_id: UUID, task: TaskIn):
-    _get("threads", th_id)
-    now = datetime.now()
-    obj = TaskOut(id=uuid4(), thread_id=th_id, state="queued", created_at=now, **task.model_dump())
-    _store("tasks", obj)
-    return obj
-
-
-@app.get("/threads/{th_id}/tasks", response_model=list[TaskOut])
-def list_tasks(th_id: UUID):
-    _get("threads", th_id)
-    return [t for t in DB["tasks"].values() if t["thread_id"] == th_id]
-
-
-@app.get("/tasks/{task_id}", response_model=TaskOut)
-def read_task(task_id: UUID):
-    return _get("tasks", task_id)
-
-
-@app.patch("/tasks/{task_id}", response_model=TaskOut)
-def update_task(task_id: UUID, task_update: TaskIn):
-    task = _get("tasks", task_id)
-    task.update(task_update.model_dump())
-    DB["tasks"][str(task_id)] = task
-    return task
-
-
-@app.delete("/tasks/{task_id}", status_code=204)
-def delete_task(task_id: UUID):
-    _delete("tasks", task_id)
-
-
 # ─── Result endpoints ───────────────────────────────────────────────────────────
 @app.post("/tasks/{task_id}/results", response_model=ResultOut, status_code=201)
 def create_result(task_id: UUID, res: ResultIn):
@@ -239,3 +205,32 @@ def read_result(res_id: UUID):
 @app.delete("/results/{res_id}", status_code=204)
 def delete_result(res_id: UUID):
     _delete("results", res_id)
+
+
+# ─── File endpoints ─────────────────────────────────────────────────────────────
+@app.post("/workspaces/{ws_id}/files", response_model=FileOut, status_code=201)
+def add_file_to_workspace(ws_id: UUID, file_data: FileIn):
+    _get("workspaces", ws_id)
+    now = datetime.now()
+    obj = FileOut(id=uuid4(), workspace_id=ws_id, created_at=now, **file_data.model_dump())
+    _store("files", obj)
+    return obj
+
+
+@app.get("/workspaces/{ws_id}/files", response_model=list[FileOut])
+def list_workspace_files(ws_id: UUID):
+    _get("workspaces", ws_id)
+    return [f for f in DB["files"].values() if f["workspace_id"] == ws_id]
+
+
+@app.get("/files/{file_id}", response_model=FileOut)
+def read_file_info(file_id: UUID):
+    return _get("files", file_id)
+
+
+@app.delete("/files/{file_id}", status_code=204)
+def delete_file(file_id: UUID):
+    # To maintain consistency, we might want to check if this file is part of any workspace
+    # and handle accordingly, or ensure it's not actively used by any thread/task.
+    # For now, simple deletion.
+    _delete("files", file_id)

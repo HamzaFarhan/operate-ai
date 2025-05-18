@@ -8,6 +8,7 @@ Run with:  streamlit run streamlit_app.py
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -15,7 +16,7 @@ from typing import Any, TypedDict, cast
 import pandas as pd
 import requests
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh  # pip install streamlit-autorefresh
+import websocket  # pip install websocket-client
 
 # ─────────────────────────
 # Config
@@ -156,23 +157,47 @@ if not st.session_state.workspace or not st.session_state.thread:
 ws_id = st.session_state.workspace["id"]
 th_id = st.session_state.thread["id"]
 
-# ── Poll latest message every 2 s ──────────────────────────────────────
-autorefresh = st_autorefresh(interval=2000, key="poll")  # page reruns ⇒ chat updates
+
+def ws_url(ws_id: int, th_id: int) -> str:
+    # assumes backend runs on localhost:8000
+    return f"ws://localhost:8000/ws/workspaces/{ws_id}/threads/{th_id}"
 
 
-def fetch_latest() -> None:
-    latest: LatestMsg | None = cast(
-        LatestMsg | None,
-        api("get", f"/workspaces/{ws_id}/threads/{th_id}/latest"),
+def ws_listener(ws_id: int, th_id: int):
+    def on_message(ws, message):
+        import json
+
+        msg = json.loads(message)
+        # Append to chat and trigger rerun
+        st.session_state.chat.append(msg)
+        st.session_state.latest_index = (st.session_state.latest_index or 0) + 1
+        st.experimental_rerun()
+
+    def on_error(ws, error):
+        pass  # Optionally log
+
+    def on_close(ws, close_status_code, close_msg):
+        pass  # Optionally log
+
+    ws = websocket.WebSocketApp(
+        ws_url(ws_id, th_id),
+        on_message=on_message,
+        on_error=on_error,
+        on_close=on_close,
     )
-    if latest is None:
+    ws.run_forever()
+
+
+def start_ws_thread(ws_id: int, th_id: int):
+    if "ws_thread" in st.session_state:
         return
-    if st.session_state.latest_index != latest["index"]:
-        st.session_state.chat.append(latest)
-        st.session_state.latest_index = latest["index"]
+    t = threading.Thread(target=ws_listener, args=(ws_id, th_id), daemon=True)
+    t.start()
+    st.session_state.ws_thread = t
 
 
-fetch_latest()
+# Start WebSocket listener thread
+start_ws_thread(ws_id, th_id)
 
 # ── Show chat with actionable previews ───────────────────────────────────
 for msg in st.session_state.chat:

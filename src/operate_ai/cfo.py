@@ -322,7 +322,11 @@ fallback_model = FallbackModel(
 )
 agent = Agent(
     model=fallback_model,
-    instructions=[Path("./src/operate_ai/prompts/cfo.md").read_text(), add_current_time, add_dirs],
+    instructions=[
+        Path("/Users/hamza/dev/operate-ai/src/operate_ai/prompts/cfo.md").read_text(),
+        add_current_time,
+        add_dirs,
+    ],
     deps_type=AgentDeps,
     retries=10,
     tools=[list_csv_files, calculate_sum, calculate_difference, calculate_mean],
@@ -332,12 +336,8 @@ agent = Agent(
 )
 
 
-async def thread(user_prompt: str) -> str:
-    deps = AgentDeps(
-        data_dir="/Users/hamza/dev/operate-ai/operateai_scenario1_data",
-        analysis_dir="/Users/hamza/dev/operate-ai/operateai_scenario1_analysis",
-        results_dir="/Users/hamza/dev/operate-ai/operateai_scenario1_results",
-    )
+async def thread(user_prompt: str, data_dir: str | Path, analysis_dir: str | Path, results_dir: str | Path) -> str:
+    deps = AgentDeps(data_dir=str(data_dir), analysis_dir=str(analysis_dir), results_dir=str(results_dir))
     message_history_path = Path(deps.results_dir) / "message_history.json"
     async with agent.run_mcp_servers():
         async with agent.iter(
@@ -390,7 +390,12 @@ async def run_app():
         user_prompt = input(input_prompt)
         if user_prompt.strip().lower() in ["q", ""]:
             return
-        input_prompt = await thread(user_prompt)
+        input_prompt = await thread(
+            user_prompt,
+            "/Users/hamza/dev/operate-ai/operateai_scenario1_data",
+            "/Users/hamza/dev/operate-ai/operateai_scenario1_analysis",
+            "/Users/hamza/dev/operate-ai/operateai_scenario1_results",
+        )
 
 
 if __name__ == "__main__":

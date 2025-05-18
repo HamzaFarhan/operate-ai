@@ -1,0 +1,64 @@
+This is my code for my CFO AGENT
+Now, I have to actually make it into a fastapi + streamlit app
+I will use sqlite3 for the database. basic sqlmodel for the orm should be fine.
+per-thread memory.json functionality will be added later. don't worry about it for now.
+just to give an idea, it will be a knowledge graph based on that specific thread. makes it easier to recall user preferences and past decisions etc going forward. but don't think about it for now.
+
+# Tables
+
+## Workspace
+no users. one workspace per company. multiple threads per workspace.
+the workspace will have an id, a name, a created_at, updated_at, and a workspace_dir
+the workspace_dir will have the data dir and the threads dir. like workspace_dir/data and workspace_dir/threads
+data will be uploaded to the workspace and shared across threads.
+
+## Thread
+a thread will have an id, a workspace id, a created_at, an updated_at, and a thread_dir
+the thread_dir will have the analysis dir, the results dir, the message_history.json, a memory.json. this thread dir will be like workspace_dir/threads/<thread_id>
+a person can reuse/continue a thread whenever they want. like selecting a previous chat from the list of chats. so no point in having a status field.
+no thread specific data is uploaded by the user.
+the data in the analysis and results dir is thread specific.
+
+I don't any other tables. if you think there should be more, first discuss it with me.
+
+# Flow
+
+- a person logs into a workspace
+- they can either create a new thread or continue an existing thread
+- the user sends a prompt
+- if it's new thread, a new thread is created and it receives the user prompt as the first message
+- if it's an existing thread, it receives user prompt and continues the thread
+- the agent runs
+- the agent uses its tools during its run and it could end the run by returning one of the output types:
+    - UserInteraction
+    - TaskResult
+    - RunSQL
+    - WriteSheetFromFile
+- each of these will be framed as a response to the user.
+- from the agent's pov, the run is over and thread could be over
+- if the output is RunSQL or WriteSheetFromFile:
+    - we first run the appropriate functions (run_sql or write_sheet_from_file)
+    - we then update the message_history with the results of the function call
+    - we then display the results to the user. so like a df in streamlit and with an expander to show the sql. for now as you can see it's just a fomatted string.
+    - the response to the user is the displayed result and the agent asking for a review.
+    - there will be a continue button with a countdown. if the user does nothing, an empty message is sent to the thread using the same endpoint as before and the thread will run based on its message_history+memory which now also has the results of the function call.
+    - if the user clicks continue before the countdown, same as above, empty messsage is sent to the thread
+    - if the user clicks the stop button, that's it, nothing happens
+    - there will also be a text box to enter a response. then this will be sent to the thread as a new message and the thread will run based on its message_history+memory which now also has the results of the function call + the new message
+- if the output is UserInteraction or TaskResult, the response to the user is the message
+- then if the user does nothing. that's it, nothing happens
+- if the user enters and sends a new message, that will be sent.
+- threads will be stored and will be selectable from a side panel like in a chat interface. so to create a new thread, just click on the new thread button.
+- and to continue an existing thread, just click on the thread you want to continue and send a message. all history and memory will be loaded
+
+Now from an endpoints pov:
+- send a message to a thread
+- return immediately
+- the thread finishes and returns a response (1 of 4 output types)
+- if the user does something which results in:
+    - an empty message being sent to the thread
+    - a new message being sent to the thread
+    - nothing happening (stop, no message)
+
+you can change up how the agent deps are handled/loaded of course based on the actual implementation.
+ok, that seems like enough overview. go for it. first the backend.

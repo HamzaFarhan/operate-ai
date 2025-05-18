@@ -14,9 +14,8 @@ from loguru import logger
 from pydantic import BaseModel, model_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.mcp import MCPServerStdio
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ToolReturnPart
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_core import to_json
 
 logfire.configure()
 
@@ -115,6 +114,10 @@ class RunSQLResult(BaseModel):
     row_count: int
 
 
+class WriteSheetResult(BaseModel):
+    file_path: str
+
+
 def run_sql(
     ctx: RunContext[GraphDeps], query: str, preview_rows: int = 2, file_name: str | None = None
 ) -> RunSQLResult:
@@ -169,7 +172,7 @@ def run_sql(
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         df.to_csv(file_path, index=False)
-        file_path.with_suffix(".txt").write_text(query_replaced)
+        file_path.with_suffix(".sql").write_text(query_replaced)
 
         return RunSQLResult(
             file_path=str(file_path),
@@ -204,7 +207,7 @@ def calculate_mean(values: list[float]) -> float:
 
 def write_sheet_from_file(
     ctx: RunContext[GraphDeps], file_path: str, sheet_name: str, workbook_name: str | None = None
-) -> str:
+) -> WriteSheetResult:
     """
     Creates an excel workbook and writes a sheet to it.
     1. Reads from the `file_path` of the previously received RunSQLResult
@@ -222,8 +225,7 @@ def write_sheet_from_file(
 
     Returns
     -------
-    str
-        The path to the workbook.
+    WriteSheetResult
     """
 
     workbook_path = (
@@ -256,7 +258,7 @@ def write_sheet_from_file(
                 f"{str(e)}"
             )
         )
-    return str(wb_path)
+    return WriteSheetResult(file_path=str(wb_path))
 
 
 def user_interaction(ctx: RunContext[GraphDeps], message: str) -> str:
@@ -273,16 +275,12 @@ def user_interaction(ctx: RunContext[GraphDeps], message: str) -> str:
     return res
 
 
-# fallback_model = FallbackModel(
-#     "anthropic:claude-3-7-sonnet-latest", "openai:gpt-4.1", "openai:gpt-4.1-mini", "google-gla:gemini-2.0-flash"
-# )
-
 fallback_model = FallbackModel(
     "openai:gpt-4.1", "anthropic:claude-3-5-sonnet-latest", "openai:gpt-4.1-mini", "google-gla:gemini-2.0-flash"
 )
 agent = Agent(
     model=fallback_model,
-    instructions=[Path("./src/operate_ai/prompts/cfo2.md").read_text(), add_current_time, add_dirs],
+    instructions=[Path("./src/operate_ai/prompts/cfo.md").read_text(), add_current_time, add_dirs],
     deps_type=GraphDeps,
     retries=10,
     tools=[
@@ -298,19 +296,17 @@ agent = Agent(
     instrument=True,
 )
 
-deps = GraphDeps(
-    data_dir="../../operateai_scenario1_data",
-    analysis_dir="../../operateai_scenario1_analysis",
-    results_dir="../../operateai_scenario1_results",
-    stop=False,
-)
 
-
-async def main():
-    # user_prompt = Path("ltv_scenario.txt").read_text()
-    user_prompt = "How many customers joined in Jan 2023 with a monthly plan?"
+async def new_thread(user_prompt: str):
+    deps = GraphDeps(
+        data_dir="/Users/hamza/dev/operate-ai/operateai_scenario1_data",
+        analysis_dir="/Users/hamza/dev/operate-ai/operateai_scenario1_analysis",
+        results_dir="/Users/hamza/dev/operate-ai/operateai_scenario1_results",
+        stop=False,
+    )
     message_history_path = Path(deps.results_dir) / "message_history.json"
     while True:
+        review = None
         async with agent.run_mcp_servers():
             async with agent.iter(
                 user_prompt=user_prompt,
@@ -320,19 +316,99 @@ async def main():
                 else None,
             ) as run:
                 async for node in run:
-                    message_history_path.write_bytes(to_json(run.ctx.state.message_history))
+                    message_history_path.write_bytes(
+                        ModelMessagesTypeAdapter.dump_json(run.ctx.state.message_history)
+                    )
                     print("\n\n", node, "\n\n")
                     if deps.stop:
                         break
-        message_history_path.write_bytes(to_json(run.ctx.state.message_history))
-        if deps.stop:
+                    if agent.is_model_request_node(node):
+                        for part in node.request.parts:
+                            if isinstance(part, ToolReturnPart):
+                                if part.tool_name == "run_sql":
+                                    file_path = Path(part.content.file_path).expanduser().resolve()
+                                    review_prompt = (
+                                        f"Ran SQL query: {file_path.with_suffix('.sql')}\n"
+                                        f"Results are in the file: {file_path}\n"
+                                        "Please Review. Press Enter to continue. Press Q to quit."
+                                    )
+                                    review = input(f"{review_prompt} > ")
+                                    if review.strip():
+                                        break
+                                elif part.tool_name == "write_sheet_from_file":
+                                    file_path = Path(part.content.file_path).expanduser().resolve()
+                                    review_prompt = (
+                                        f"Wrote to workbook: {file_path}\n"
+                                        "Please Review. Press Enter to continue. Press Q to quit."
+                                    )
+                                    review = input(f"{review_prompt} > ")
+                                    if review.strip():
+                                        break
+
+        message_history_path.write_bytes(ModelMessagesTypeAdapter.dump_json(run.ctx.state.message_history))
+        if deps.stop or run.result is None:
             break
-        if not run.result:
-            continue
-        user_prompt = input(f"{run.result.output} > ")
-        if user_prompt.strip().lower() == "q":
+        user_prompt = review or input(f"{run.result.output} > ")
+        if user_prompt.strip().lower() in ["q", ""]:
             break
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    user_prompt = "How many customers in 2023 had a monthly plan?"
+    asyncio.run(new_thread(user_prompt=user_prompt))
+
+
+"""
+This is all of my code for my CFO AGENT
+Now, I have to actually make it into a fastapi + streamlit app
+I will use sqlite3 for the database.
+
+# Tables
+
+## Workspace
+no users. one workspace per company. multiple threads per workspace.
+the workspace will have an id, a name, a created_at, updated_at, and a workspace_dir
+the workspace_dir will have the data dir and the threads dir. like workspace_dir/data and workspace_dir/threads
+data will be uploaded to the workspace and shared across threads.
+
+## Thread
+a thread will have an id, a workspace id, a created_at, an updated_at, and a thread_dir
+the thread_dir will have the analysis dir, the results dir, the message_history.json, a memory.json. this thread dir will be like workspace_dir/threads/<thread_id>
+a person can reuse/continue a thread whenever they want. like selecting a previous chat from the list of chats. so no point in having a status field.
+no thread specific data is uploaded by the user.
+the data in the analysis and results dir is thread specific.
+
+# Flow
+
+- a person logs into a workspace
+- they can either create a new thread or continue an existing thread
+- the user sends a prompt
+- if it's new thread, a new thread is created with an empty thread_dir
+- if it's an existing thread, the thread_dir is loaded from the workspace_dir/threads/<thread_id>
+- the agent runs
+- if the agent decides to call the user_interaction tool, the flow stops and the user is asked to provide a response
+- the flow wont continue until the user provides a response
+- the response could be text entered into a box, or the user clicking 'continue' or the user clicking the read square stop button
+- after the agent uses the run_sql tool, the flow stops and the user is asked to review the results
+- the flow wont continue until the user provides a response
+- the response could be text entered into a box, or the user clicking 'continue' or the user clicking the read square stop button
+- after the agent uses the write_sheet_from_file tool, the flow stops and the user is asked to review the results
+- the flow wont continue until the user provides a response
+- the response could be text entered into a box, or the user clicking 'continue' or the user clicking the read square stop button
+- in any other case/tool call, the flow continues without any user intervention
+- once the agent is done, it sends a final response to the user
+- but even then, unless the user starts a new thread (which for now in our code is just entering q), the thread is still alive
+- so if the user sends a new message, the thread continues
+
+the complexity is, how do we handle this user interaction?
+becasue once a new thread is cerated using post and the user pormpt, we go back to the client
+now, the server decides to engage the user in the scenarios we've defined above.
+then, the server has sent a request to the user, but then it gets the request returns. we still need to wait for the user to respond
+
+
+
+
+
+
+
+"""

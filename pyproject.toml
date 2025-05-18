@@ -25,6 +25,8 @@ dependencies = [
     "tenacity>=9.1.2",
     "openpyxl>=3.1.5",
     "logfire>=3.14.1",
+    "sqlmodel>=0.0.24",
+    "streamlit>=1.45.1",
 ]
 
 [tool.uv.sources]

@@ -207,6 +207,9 @@ def run_sql(analysis_dir: str, query: str, preview_rows: int = 2, file_name: str
 
 @dataclass
 class RunSQLNode(BaseNode[GraphState, AgentDeps, str]):
+    """Run 'run_sql' tool."""
+
+    docstring_notes = True
     query: str
     preview_rows: int = 2
     file_name: str | None = None
@@ -315,6 +318,9 @@ def write_sheet_from_file(
 
 @dataclass
 class WriteSheetNode(BaseNode[GraphState, AgentDeps, str]):
+    """Run 'write_sheet_from_file' tool."""
+
+    docstring_notes = True
     file_path: str
     sheet_name: str
     workbook_name: str | None = None
@@ -358,6 +364,17 @@ def user_interaction(message: str) -> str:
     return res
 
 
+@dataclass
+class UserInteractionNode(BaseNode[GraphState, AgentDeps, str]):
+    """Pass to End."""
+
+    docstring_notes = True
+    message: str
+
+    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> End[str]:  # noqa: ARG002
+        return End(data=self.message)
+
+
 class TaskResult(BaseModel):
     """
     A task result.
@@ -366,9 +383,28 @@ class TaskResult(BaseModel):
     message: str = Field(description="The final response to the user.")
 
 
+@dataclass
+class TaskResultNode(BaseNode[GraphState, AgentDeps, str]):
+    """Pass to End."""
+
+    docstring_notes = True
+    message: str
+
+    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> End[str]:  # noqa: ARG002
+        return End(data=self.message)
+
+
+# fallback_model = FallbackModel(
+#     "openai:gpt-4.1", "anthropic:claude-3-5-sonnet-latest", "openai:gpt-4.1-mini", "google-gla:gemini-2.0-flash"
+# )
+
 fallback_model = FallbackModel(
-    "openai:gpt-4.1", "anthropic:claude-3-5-sonnet-latest", "openai:gpt-4.1-mini", "google-gla:gemini-2.0-flash"
+    "google-gla:gemini-2.0-flash",
+    "openai:gpt-4.1",
+    "anthropic:claude-3-5-sonnet-latest",
+    "openai:gpt-4.1-mini",
 )
+
 agent = Agent(
     model=fallback_model,
     instructions=[
@@ -387,9 +423,14 @@ agent = Agent(
 
 @dataclass
 class RunAgentNode(BaseNode[GraphState, AgentDeps, str]):
+    """Run the agent."""
+
+    docstring_notes = True
     user_prompt: str
 
-    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> RunSQLNode | WriteSheetNode | End[str]:
+    async def run(
+        self, ctx: GraphRunContext[GraphState, AgentDeps]
+    ) -> RunSQLNode | WriteSheetNode | UserInteractionNode | TaskResultNode | End[str]:
         async with agent.run_mcp_servers():
             res = await agent.run(
                 user_prompt=self.user_prompt, deps=ctx.deps, message_history=ctx.state.message_history
@@ -405,14 +446,19 @@ class RunAgentNode(BaseNode[GraphState, AgentDeps, str]):
                     sheet_name=res.output.sheet_name,
                     workbook_name=res.output.workbook_name,
                 )
-            elif isinstance(res.output, (UserInteraction, TaskResult)):
-                return End(data=res.output.message)
+            elif isinstance(res.output, UserInteraction):
+                return UserInteractionNode(message=res.output.message)
+            elif isinstance(res.output, TaskResult):
+                return TaskResultNode(message=res.output.message)
             else:
                 return End(data=str(res.output))
 
 
-graph = Graph(nodes=(RunAgentNode, RunSQLNode, WriteSheetNode))
-graph.mermaid_save(Path("cfo_graph.jpg"), direction="LR")
+graph = Graph(
+    nodes=(RunAgentNode, RunSQLNode, WriteSheetNode, UserInteractionNode, TaskResultNode),
+    name="CFO Graph",
+)
+graph.mermaid_save(Path("cfo_graph.jpg"), direction="LR", highlighted_nodes=RunAgentNode)
 
 
 def setup_thread_dirs(thread_dir: Path | str) -> tuple[str, str, str]:
@@ -428,12 +474,20 @@ def setup_thread_dirs(thread_dir: Path | str) -> tuple[str, str, str]:
     return str(data_dir), str(analysis_dir), str(results_dir)
 
 
+async def load_state(persistence: FileStatePersistence) -> GraphState:
+    if snapshot := await persistence.load_next():
+        return snapshot.state
+    snapshots = await persistence.load_all()
+    return snapshots[-1].state if snapshots else GraphState()
+
+
 async def thread(thread_dir: Path | str, user_prompt: str) -> str:
     data_dir, analysis_dir, results_dir = setup_thread_dirs(thread_dir)
-    persistence = FileStatePersistence(json_file=Path(thread_dir) / "state.json")
-    logger.info(f"Persistence: {await persistence.load_all()}")
+    persistence_path = Path(thread_dir) / "state.json"
+    persistence = FileStatePersistence(json_file=persistence_path.expanduser().resolve())
+    persistence.set_graph_types(graph=graph)
+    state = await load_state(persistence=persistence)
     deps = AgentDeps(data_dir=data_dir, analysis_dir=analysis_dir, results_dir=results_dir)
-    state = GraphState()
     res = await graph.run(
         start_node=RunAgentNode(user_prompt=user_prompt), state=state, deps=deps, persistence=persistence
     )
@@ -445,11 +499,11 @@ async def run_app():
     while True:
         # user_prompt = "How many customers in 2023 had a monthly plan?"
         thread_dir = Path("/Users/hamza/dev/operate-ai/workspaces/1/threads/1")
-        user_prompt = input(input_prompt)
+        user_prompt = input(f"{input_prompt} > ")
         if user_prompt.strip().lower() in ["q", ""]:
             return
         input_prompt = await thread(thread_dir=thread_dir, user_prompt=user_prompt)
 
 
 # if __name__ == "__main__":
-#     asyncio.run(run_app())
+# asyncio.run(run_app())

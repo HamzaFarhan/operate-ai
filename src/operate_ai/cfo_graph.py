@@ -3,6 +3,7 @@ import json
 import re
 import tempfile
 from collections.abc import Hashable
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Self
@@ -11,11 +12,13 @@ import duckdb
 import logfire
 import pandas as pd
 from loguru import logger
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.mcp import MCPServerStdio
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+from pydantic_graph.persistence.file import FileStatePersistence
 
 logfire.configure()
 
@@ -23,15 +26,23 @@ SQL_TIMEOUT_SECONDS = 5
 PREVIEW_ROWS = 10
 
 
+def user_message(content: str) -> ModelRequest:
+    return ModelRequest(parts=[UserPromptPart(content=content)])
+
+
 class Success(BaseModel):
     message: Any
 
 
-class GraphDeps(BaseModel):
+@dataclass
+class GraphState:
+    message_history: list[ModelMessage] = field(default_factory=list)
+
+
+class AgentDeps(BaseModel):
     data_dir: str
     analysis_dir: str
     results_dir: str
-    stop: bool = False
 
     @model_validator(mode="after")
     def create_dirs(self: Self) -> Self:
@@ -63,7 +74,7 @@ def extract_csv_paths(sql_query: str) -> list[str]:
     return paths
 
 
-def add_dirs(ctx: RunContext[GraphDeps]) -> str:
+def add_dirs(ctx: RunContext[AgentDeps]) -> str:
     return (
         f"<data_dir>\n{str(Path(ctx.deps.data_dir).expanduser().resolve())}\n</data_dir>\n"
         f"<analysis_dir>\n{str(Path(ctx.deps.analysis_dir).expanduser().resolve())}\n</analysis_dir>\n"
@@ -85,7 +96,7 @@ def preview_csv(df: Path | str | pd.DataFrame, num_rows: int = PREVIEW_ROWS) -> 
     return pd.read_csv(df).head(num_rows).to_dict(orient="records")  # type: ignore
 
 
-def list_csv_files(ctx: RunContext[GraphDeps]) -> str:
+def list_csv_files(ctx: RunContext[AgentDeps]) -> str:
     """
     Lists all available csv files.
     """
@@ -104,6 +115,20 @@ def temp_file_path(file_dir: Path | str | None = None) -> Path:
     return Path(file_dir) / f"ai_cfo_result_{Path(file_dir).name}_{ts}.csv"
 
 
+class RunSQL(BaseModel):
+    """
+    1. Runs an SQL query on csv file(s) using duckdb
+    2. Writes the full result to disk
+    3. Returns a ResultHandle with a small in-memory preview.
+    """
+
+    query: str = Field(description="The SQL query to execute.")
+    preview_rows: int = Field(description="Number of rows to preview. 2-5 should be enough for most queries.")
+    file_name: str | None = Field(
+        description="Descriptive name of the file based on the query to save the result to in the `analysis_dir`."
+    )
+
+
 class RunSQLResult(BaseModel):
     """
     A lightweight reference to a (possibly large) query result on disk.
@@ -114,13 +139,7 @@ class RunSQLResult(BaseModel):
     row_count: int
 
 
-class WriteSheetResult(BaseModel):
-    file_path: str
-
-
-def run_sql(
-    ctx: RunContext[GraphDeps], query: str, preview_rows: int = 2, file_name: str | None = None
-) -> RunSQLResult:
+def run_sql(analysis_dir: str, query: str, preview_rows: int = 2, file_name: str | None = None) -> RunSQLResult:
     """
     1. Runs an SQL query on csv file(s) using duckdb
     2. Writes the full result to disk
@@ -163,11 +182,7 @@ def run_sql(
 
         df: pd.DataFrame = duckdb.sql(query_replaced).df()  # type: ignore
 
-        file_path = (
-            Path(ctx.deps.analysis_dir) / file_name
-            if file_name
-            else temp_file_path(file_dir=ctx.deps.analysis_dir)
-        )
+        file_path = Path(analysis_dir) / file_name if file_name else temp_file_path(file_dir=analysis_dir)
         file_path = file_path.expanduser().resolve().with_suffix(".csv")
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -190,6 +205,29 @@ def run_sql(
         raise ModelRetry(str(e))
 
 
+@dataclass
+class RunSQLNode(BaseNode[GraphState, AgentDeps, str]):
+    query: str
+    preview_rows: int = 2
+    file_name: str | None = None
+
+    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> End[str]:
+        sql_result = run_sql(
+            analysis_dir=ctx.deps.analysis_dir,
+            query=self.query,
+            preview_rows=self.preview_rows,
+            file_name=self.file_name,
+        )
+        ctx.state.message_history.append(user_message(sql_result.model_dump_json()))
+        file_path = Path(sql_result.file_path).expanduser().resolve()
+        input_prompt = (
+            f"Ran SQL query: {file_path.with_suffix('.sql')}\n"
+            f"Results are in the file: {file_path}\n"
+            "Please Review. Press Enter to continue. Press Q to quit."
+        )
+        return End(data=input_prompt)
+
+
 def calculate_sum(values: list[float]) -> float:
     """Calculate the sum of a list of values."""
     return sum(values)
@@ -205,8 +243,26 @@ def calculate_mean(values: list[float]) -> float:
     return sum(values) / len(values)
 
 
+class WriteSheetFromFile(BaseModel):
+    """
+    Creates an excel workbook and writes a sheet to it.
+    1. Reads from the `file_path` of the previously received RunSQLResult
+    2. Appends to / creates `workbook_path`.
+    """
+
+    file_path: str = Field(
+        description="Path to the file to read from. Almost always a `file_path` of a previously received RunSQLResult."
+    )
+    sheet_name: str = Field(description="The name of the sheet to write to.")
+    workbook_name: str | None = Field(description="Name of the workbook to append to / create in `results_dir`.")
+
+
+class WriteSheetResult(BaseModel):
+    file_path: str
+
+
 def write_sheet_from_file(
-    ctx: RunContext[GraphDeps], file_path: str, sheet_name: str, workbook_name: str | None = None
+    results_dir: str, file_path: str, sheet_name: str, workbook_name: str | None = None
 ) -> WriteSheetResult:
     """
     Creates an excel workbook and writes a sheet to it.
@@ -228,11 +284,7 @@ def write_sheet_from_file(
     WriteSheetResult
     """
 
-    workbook_path = (
-        Path(ctx.deps.results_dir) / workbook_name
-        if workbook_name
-        else temp_file_path(file_dir=ctx.deps.results_dir)
-    )
+    workbook_path = Path(results_dir) / workbook_name if workbook_name else temp_file_path(file_dir=results_dir)
     wb_path = workbook_path.expanduser().resolve().with_suffix(".xlsx")
     wb_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -261,7 +313,39 @@ def write_sheet_from_file(
     return WriteSheetResult(file_path=str(wb_path))
 
 
-def user_interaction(ctx: RunContext[GraphDeps], message: str) -> str:
+@dataclass
+class WriteSheetNode(BaseNode[GraphState, AgentDeps, str]):
+    file_path: str
+    sheet_name: str
+    workbook_name: str | None = None
+
+    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> End[str]:
+        write_sheet_result = write_sheet_from_file(
+            results_dir=ctx.deps.results_dir,
+            file_path=self.file_path,
+            sheet_name=self.sheet_name,
+            workbook_name=self.workbook_name,
+        )
+        ctx.state.message_history.append(user_message(write_sheet_result.model_dump_json()))
+        file_path = Path(write_sheet_result.file_path).expanduser().resolve()
+        input_prompt = f"Wrote to workbook: {file_path}\nPlease Review. Press Enter to continue. Press Q to quit."
+        return End(data=input_prompt)
+
+
+class UserInteraction(BaseModel):
+    """
+    Interacts with the user. Could be:
+    - A question
+    - A progress update
+    - An assumption made that needs to be validated
+    - A request for clarification
+    - Anything else needed from the user to proceed
+    """
+
+    message: str = Field(description="The message to display to the user.")
+
+
+def user_interaction(message: str) -> str:
     """
     Interacts with the user. Could be:
     - A question
@@ -271,8 +355,15 @@ def user_interaction(ctx: RunContext[GraphDeps], message: str) -> str:
     - Anything else needed from the user to proceed
     """
     res = input(f"{message}> ")
-    ctx.deps.stop = res.strip().lower() == "q"
     return res
+
+
+class TaskResult(BaseModel):
+    """
+    A task result.
+    """
+
+    message: str = Field(description="The final response to the user.")
 
 
 fallback_model = FallbackModel(
@@ -280,135 +371,85 @@ fallback_model = FallbackModel(
 )
 agent = Agent(
     model=fallback_model,
-    instructions=[Path("./src/operate_ai/prompts/cfo.md").read_text(), add_current_time, add_dirs],
-    deps_type=GraphDeps,
-    retries=10,
-    tools=[
-        list_csv_files,
-        run_sql,
-        write_sheet_from_file,
-        user_interaction,
-        calculate_sum,
-        calculate_difference,
-        calculate_mean,
+    instructions=[
+        Path("/Users/hamza/dev/operate-ai/src/operate_ai/prompts/cfo.md").read_text(),
+        add_current_time,
+        add_dirs,
     ],
+    deps_type=AgentDeps,
+    retries=10,
+    tools=[list_csv_files, calculate_sum, calculate_difference, calculate_mean],
     mcp_servers=[thinking_server],
+    output_type=TaskResult | UserInteraction | RunSQL | WriteSheetFromFile,  # type: ignore
     instrument=True,
 )
 
 
-async def new_thread(user_prompt: str):
-    deps = GraphDeps(
-        data_dir="/Users/hamza/dev/operate-ai/operateai_scenario1_data",
-        analysis_dir="/Users/hamza/dev/operate-ai/operateai_scenario1_analysis",
-        results_dir="/Users/hamza/dev/operate-ai/operateai_scenario1_results",
-        stop=False,
-    )
-    message_history_path = Path(deps.results_dir) / "message_history.json"
-    while True:
-        review = None
+@dataclass
+class RunAgentNode(BaseNode[GraphState, AgentDeps, str]):
+    user_prompt: str
+
+    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> RunSQLNode | WriteSheetNode | End[str]:
         async with agent.run_mcp_servers():
-            async with agent.iter(
-                user_prompt=user_prompt,
-                deps=deps,
-                message_history=ModelMessagesTypeAdapter.validate_json(message_history_path.read_bytes())
-                if message_history_path.exists()
-                else None,
-            ) as run:
-                async for node in run:
-                    message_history_path.write_bytes(
-                        ModelMessagesTypeAdapter.dump_json(run.ctx.state.message_history)
-                    )
-                    print("\n\n", node, "\n\n")
-                    if deps.stop:
-                        break
-                    if agent.is_model_request_node(node):
-                        for part in node.request.parts:
-                            if isinstance(part, ToolReturnPart):
-                                if part.tool_name == "run_sql":
-                                    file_path = Path(part.content.file_path).expanduser().resolve()
-                                    review_prompt = (
-                                        f"Ran SQL query: {file_path.with_suffix('.sql')}\n"
-                                        f"Results are in the file: {file_path}\n"
-                                        "Please Review. Press Enter to continue. Press Q to quit."
-                                    )
-                                    review = input(f"{review_prompt} > ")
-                                    if review.strip():
-                                        break
-                                elif part.tool_name == "write_sheet_from_file":
-                                    file_path = Path(part.content.file_path).expanduser().resolve()
-                                    review_prompt = (
-                                        f"Wrote to workbook: {file_path}\n"
-                                        "Please Review. Press Enter to continue. Press Q to quit."
-                                    )
-                                    review = input(f"{review_prompt} > ")
-                                    if review.strip():
-                                        break
+            res = await agent.run(
+                user_prompt=self.user_prompt, deps=ctx.deps, message_history=ctx.state.message_history
+            )
+            ctx.state.message_history += res.new_messages()
+            if isinstance(res.output, RunSQL):
+                return RunSQLNode(
+                    query=res.output.query, preview_rows=res.output.preview_rows, file_name=res.output.file_name
+                )
+            elif isinstance(res.output, WriteSheetFromFile):
+                return WriteSheetNode(
+                    file_path=res.output.file_path,
+                    sheet_name=res.output.sheet_name,
+                    workbook_name=res.output.workbook_name,
+                )
+            elif isinstance(res.output, (UserInteraction, TaskResult)):
+                return End(data=res.output.message)
+            else:
+                return End(data=str(res.output))
 
-        message_history_path.write_bytes(ModelMessagesTypeAdapter.dump_json(run.ctx.state.message_history))
-        if deps.stop or run.result is None:
-            break
-        user_prompt = review or input(f"{run.result.output} > ")
+
+graph = Graph(nodes=(RunAgentNode, RunSQLNode, WriteSheetNode))
+graph.mermaid_save(Path("cfo_graph.jpg"), direction="LR")
+
+
+def setup_thread_dirs(thread_dir: Path | str) -> tuple[str, str, str]:
+    thread_dir = Path(thread_dir).expanduser().resolve()
+    thread_dir.mkdir(parents=True, exist_ok=True)
+    workspace_dir = thread_dir.parent.parent.expanduser().resolve()
+    data_dir = workspace_dir / "data"
+    analysis_dir = thread_dir / "analysis"
+    results_dir = thread_dir / "results"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    return str(data_dir), str(analysis_dir), str(results_dir)
+
+
+async def thread(thread_dir: Path | str, user_prompt: str) -> str:
+    data_dir, analysis_dir, results_dir = setup_thread_dirs(thread_dir)
+    persistence = FileStatePersistence(json_file=Path(thread_dir) / "state.json")
+    logger.info(f"Persistence: {await persistence.load_all()}")
+    deps = AgentDeps(data_dir=data_dir, analysis_dir=analysis_dir, results_dir=results_dir)
+    state = GraphState()
+    res = await graph.run(
+        start_node=RunAgentNode(user_prompt=user_prompt), state=state, deps=deps, persistence=persistence
+    )
+    return res.output
+
+
+async def run_app():
+    input_prompt = ""
+    while True:
+        # user_prompt = "How many customers in 2023 had a monthly plan?"
+        thread_dir = Path("/Users/hamza/dev/operate-ai/workspaces/1/threads/1")
+        user_prompt = input(input_prompt)
         if user_prompt.strip().lower() in ["q", ""]:
-            break
+            return
+        input_prompt = await thread(thread_dir=thread_dir, user_prompt=user_prompt)
 
 
-if __name__ == "__main__":
-    user_prompt = "How many customers in 2023 had a monthly plan?"
-    asyncio.run(new_thread(user_prompt=user_prompt))
-
-
-"""
-This is all of my code for my CFO AGENT
-Now, I have to actually make it into a fastapi + streamlit app
-I will use sqlite3 for the database.
-
-# Tables
-
-## Workspace
-no users. one workspace per company. multiple threads per workspace.
-the workspace will have an id, a name, a created_at, updated_at, and a workspace_dir
-the workspace_dir will have the data dir and the threads dir. like workspace_dir/data and workspace_dir/threads
-data will be uploaded to the workspace and shared across threads.
-
-## Thread
-a thread will have an id, a workspace id, a created_at, an updated_at, and a thread_dir
-the thread_dir will have the analysis dir, the results dir, the message_history.json, a memory.json. this thread dir will be like workspace_dir/threads/<thread_id>
-a person can reuse/continue a thread whenever they want. like selecting a previous chat from the list of chats. so no point in having a status field.
-no thread specific data is uploaded by the user.
-the data in the analysis and results dir is thread specific.
-
-# Flow
-
-- a person logs into a workspace
-- they can either create a new thread or continue an existing thread
-- the user sends a prompt
-- if it's new thread, a new thread is created with an empty thread_dir
-- if it's an existing thread, the thread_dir is loaded from the workspace_dir/threads/<thread_id>
-- the agent runs
-- if the agent decides to call the user_interaction tool, the flow stops and the user is asked to provide a response
-- the flow wont continue until the user provides a response
-- the response could be text entered into a box, or the user clicking 'continue' or the user clicking the read square stop button
-- after the agent uses the run_sql tool, the flow stops and the user is asked to review the results
-- the flow wont continue until the user provides a response
-- the response could be text entered into a box, or the user clicking 'continue' or the user clicking the read square stop button
-- after the agent uses the write_sheet_from_file tool, the flow stops and the user is asked to review the results
-- the flow wont continue until the user provides a response
-- the response could be text entered into a box, or the user clicking 'continue' or the user clicking the read square stop button
-- in any other case/tool call, the flow continues without any user intervention
-- once the agent is done, it sends a final response to the user
-- but even then, unless the user starts a new thread (which for now in our code is just entering q), the thread is still alive
-- so if the user sends a new message, the thread continues
-
-the complexity is, how do we handle this user interaction?
-becasue once a new thread is cerated using post and the user pormpt, we go back to the client
-now, the server decides to engage the user in the scenarios we've defined above.
-then, the server has sent a request to the user, but then it gets the request returns. we still need to wait for the user to respond
-
-
-
-
-
-
-
-"""
+# if __name__ == "__main__":
+#     asyncio.run(run_app())

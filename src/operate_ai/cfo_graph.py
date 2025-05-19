@@ -8,7 +8,7 @@ from collections.abc import Hashable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import duckdb
 import logfire
@@ -17,7 +17,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.mcp import MCPServerStdio
-from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from pydantic_graph.persistence.file import FileStatePersistence
@@ -31,10 +31,6 @@ MAX_RETRIES = 10
 
 def user_message(content: str) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=content)])
-
-
-def retry_message(content: str, tool_name: str | None = None) -> ModelRequest:
-    return ModelRequest(parts=[RetryPromptPart(content=content, tool_name=tool_name)])
 
 
 class Success(BaseModel):
@@ -61,6 +57,11 @@ class AgentDeps(BaseModel):
         return self
 
 
+class GraphResult(BaseModel):
+    result_type: Literal["run_sql", "write_sheet", "user_interaction", "task_result", "error"]
+    result: str
+
+
 thinking_server = MCPServerStdio(command="npx", args=["-y", "@modelcontextprotocol/server-sequential-thinking"])
 
 
@@ -72,7 +73,7 @@ def extract_csv_paths(sql_query: str) -> list[str]:
     read_csv_matches = re.findall(read_csv_pattern, sql_query, re.IGNORECASE)
 
     # Extract paths from both single and multiple CSV cases
-    paths: list[Any] = []
+    paths: list[str] = []
     for single_path, multiple_paths in read_csv_matches:
         if single_path:
             paths.append(single_path)
@@ -95,7 +96,7 @@ def add_current_time() -> str:
     return f"<current_time>\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n</current_time>"
 
 
-def preview_csv(df: Path | str | pd.DataFrame, num_rows: int = PREVIEW_ROWS) -> list[dict[Hashable, Any]]:
+def preview_csv(df: Path | pd.DataFrame, num_rows: int = PREVIEW_ROWS) -> list[dict[Hashable, Any]]:
     """
     Returns the first `num_rows` rows of the specified CSV file.
     Should be used for previewing the data.
@@ -109,10 +110,10 @@ def list_csv_files(ctx: RunContext[AgentDeps]) -> str:
     """
     Lists all available csv files.
     """
-    csv_files = [str(file.expanduser().resolve()) for file in Path(ctx.deps.data_dir).glob("*.csv")]
+    csv_files = [file.expanduser().resolve() for file in Path(ctx.deps.data_dir).glob("*.csv")]
     res = "\n<available_csv_files>\n"
     for file in csv_files:
-        res += file + "\n"
+        res += str(file) + "\n"
         res += f"First {PREVIEW_ROWS} rows for preview:\n"
         res += json.dumps(preview_csv(df=file, num_rows=PREVIEW_ROWS)) + "\n\n"
     return res.strip() + "\n</available_csv_files>"
@@ -131,7 +132,13 @@ class RunSQL(BaseModel):
     3. Returns a ResultHandle with a small in-memory preview.
     """
 
-    query: str = Field(description="The SQL query to execute.")
+    query: str = Field(
+        description=(
+            "The SQL query to execute."
+            "When reading a csv, use the FULL path with the data_dir included."
+            "Example: 'select names from read_csv('workspaces/1/data/orders.csv')'"
+        )
+    )
     preview_rows: int = Field(description="Number of rows to preview. 2-5 should be enough for most queries.")
     file_name: str | None = Field(
         description="Descriptive name of the file based on the query to save the result to in the `analysis_dir`."
@@ -143,9 +150,10 @@ class RunSQLResult(BaseModel):
     A lightweight reference to a (possibly large) query result on disk.
     """
 
-    file_path: str
-    preview: list[dict[str, Any]]
+    sql_path: str
+    csv_path: str
     row_count: int
+    preview: list[dict[str, Any]]
 
 
 async def run_sql(
@@ -175,8 +183,7 @@ async def run_sql(
     def check_csv_files_exist(paths: list[str]) -> None:
         """Check if all CSV files in the paths exist."""
         for path in paths:
-            file_path = Path(path)
-            if not file_path.exists():
+            if not Path(path).exists():
                 raise FileNotFoundError(f"CSV file not found: {path}")
 
     async def _run_with_timeout():
@@ -193,7 +200,9 @@ async def run_sql(
 
         df: pd.DataFrame = duckdb.sql(query_replaced).df()  # type: ignore
 
-        file_path = Path(analysis_dir) / file_name if file_name else temp_file_path(file_dir=analysis_dir)
+        file_path = (
+            Path(analysis_dir) / Path(file_name).name if file_name else temp_file_path(file_dir=analysis_dir)
+        )
         file_path = file_path.expanduser().resolve().with_suffix(".csv")
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -201,7 +210,8 @@ async def run_sql(
         file_path.with_suffix(".sql").write_text(query_replaced)
 
         return RunSQLResult(
-            file_path=str(file_path),
+            sql_path=str(file_path.with_suffix(".sql")),
+            csv_path=str(file_path),
             preview=preview_csv(df=df, num_rows=preview_rows),  # type: ignore
             row_count=len(df),
         )
@@ -217,7 +227,7 @@ async def run_sql(
 
 
 @dataclass
-class RunSQLNode(BaseNode[GraphState, AgentDeps, str]):
+class RunSQLNode(BaseNode[GraphState, AgentDeps, RunSQLResult]):
     """Run 'run_sql' tool."""
 
     docstring_notes = True
@@ -225,7 +235,7 @@ class RunSQLNode(BaseNode[GraphState, AgentDeps, str]):
     preview_rows: int = 2
     file_name: str | None = None
 
-    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> RunAgentNode | End[str]:
+    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> RunAgentNode | End[RunSQLResult]:
         try:
             sql_result = await run_sql(
                 analysis_dir=ctx.deps.analysis_dir,
@@ -234,16 +244,10 @@ class RunSQLNode(BaseNode[GraphState, AgentDeps, str]):
                 file_name=self.file_name,
             )
             ctx.state.message_history.append(user_message(sql_result.model_dump_json()))
-            file_path = Path(sql_result.file_path).expanduser().resolve()
-            input_prompt = (
-                f"Ran SQL query: {file_path.with_suffix('.sql')}\n"
-                f"Results are in the file: {file_path}\n"
-                "Please Review. Press Enter to continue. Press Q to quit."
-            )
-            return End(data=input_prompt)
+            return End(data=sql_result)
         except Exception as e:
             logger.error(f"Error running SQL query: {e}")
-            ctx.state.message_history.append(retry_message(str(e), tool_name="RunSQLNode"))
+            ctx.state.message_history.append(user_message(content=f"Error in RunSQL: {str(e)}"))
             ctx.state.run_sql_attempts += 1
             return RunAgentNode(user_prompt="")
 
@@ -304,7 +308,9 @@ def write_sheet_from_file(
     WriteSheetResult
     """
 
-    workbook_path = Path(results_dir) / workbook_name if workbook_name else temp_file_path(file_dir=results_dir)
+    workbook_path = (
+        Path(results_dir) / Path(workbook_name).name if workbook_name else temp_file_path(file_dir=results_dir)
+    )
     wb_path = workbook_path.expanduser().resolve().with_suffix(".xlsx")
     wb_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -334,7 +340,7 @@ def write_sheet_from_file(
 
 
 @dataclass
-class WriteSheetNode(BaseNode[GraphState, AgentDeps, str]):
+class WriteSheetNode(BaseNode[GraphState, AgentDeps, WriteSheetResult]):
     """Run 'write_sheet_from_file' tool."""
 
     docstring_notes = True
@@ -342,7 +348,7 @@ class WriteSheetNode(BaseNode[GraphState, AgentDeps, str]):
     sheet_name: str
     workbook_name: str | None = None
 
-    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> RunAgentNode | End[str]:
+    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> RunAgentNode | End[WriteSheetResult]:
         try:
             write_sheet_result = write_sheet_from_file(
                 results_dir=ctx.deps.results_dir,
@@ -351,14 +357,10 @@ class WriteSheetNode(BaseNode[GraphState, AgentDeps, str]):
                 workbook_name=self.workbook_name,
             )
             ctx.state.message_history.append(user_message(write_sheet_result.model_dump_json()))
-            file_path = Path(write_sheet_result.file_path).expanduser().resolve()
-            input_prompt = (
-                f"Wrote to workbook: {file_path}\nPlease Review. Press Enter to continue. Press Q to quit."
-            )
-            return End(data=input_prompt)
+            return End(data=write_sheet_result)
         except Exception as e:
             logger.error(f"Error writing sheet: {e}")
-            ctx.state.message_history.append(retry_message(str(e), tool_name="WriteSheetNode"))
+            ctx.state.message_history.append(user_message(content=f"Error in WriteSheet: {str(e)}"))
             ctx.state.write_sheet_attempts += 1
             return RunAgentNode(user_prompt="")
 
@@ -431,7 +433,7 @@ fallback_model = FallbackModel(
 )
 
 agent = Agent(
-    model=fallback_model,
+    model="google-gla:gemini-2.0-flash",
     instructions=[
         Path("/Users/hamza/dev/operate-ai/src/operate_ai/prompts/cfo.md").read_text(),
         add_current_time,
@@ -447,7 +449,7 @@ agent = Agent(
 
 
 @dataclass
-class RunAgentNode(BaseNode[GraphState, AgentDeps, str]):
+class RunAgentNode(BaseNode[GraphState, AgentDeps, RunSQLResult | WriteSheetResult | str]):
     """Run the agent."""
 
     docstring_notes = True
@@ -455,7 +457,14 @@ class RunAgentNode(BaseNode[GraphState, AgentDeps, str]):
 
     async def run(
         self, ctx: GraphRunContext[GraphState, AgentDeps]
-    ) -> RunSQLNode | WriteSheetNode | UserInteractionNode | TaskResultNode | End[str]:
+    ) -> (
+        RunSQLNode
+        | WriteSheetNode
+        | UserInteractionNode
+        | TaskResultNode
+        | End[RunSQLResult | WriteSheetResult | str]
+    ):
+        error_result = End(data="Ran into an error. Please try again.")
         try:
             async with agent.run_mcp_servers():
                 res = await agent.run(
@@ -469,7 +478,7 @@ class RunAgentNode(BaseNode[GraphState, AgentDeps, str]):
                             preview_rows=res.output.preview_rows,
                             file_name=res.output.file_name,
                         )
-                    return End(data="Ran into an error. Please try again.")
+                    return error_result
                 elif isinstance(res.output, WriteSheetFromFile):
                     if ctx.state.write_sheet_attempts < MAX_RETRIES:
                         return WriteSheetNode(
@@ -477,16 +486,16 @@ class RunAgentNode(BaseNode[GraphState, AgentDeps, str]):
                             sheet_name=res.output.sheet_name,
                             workbook_name=res.output.workbook_name,
                         )
-                    return End(data="Ran into an error. Please try again.")
+                    return error_result
                 elif isinstance(res.output, UserInteraction):
                     return UserInteractionNode(message=res.output.message)
                 elif isinstance(res.output, TaskResult):
                     return TaskResultNode(message=res.output.message)
                 else:
-                    return End(data=str(res.output))
+                    return error_result
         except Exception as e:
             logger.error(f"Error running agent: {e}")
-            return End(data="Ran into an error. Please try again.")
+            return error_result
 
 
 graph = Graph(
@@ -521,7 +530,7 @@ async def load_state(persistence: FileStatePersistence) -> GraphState:
     return GraphState(message_history=snapshots[-1].state.message_history) if snapshots else GraphState()
 
 
-async def thread(thread_dir: Path | str, user_prompt: str) -> str:
+async def thread(thread_dir: Path | str, user_prompt: str) -> RunSQLResult | WriteSheetResult | str:
     thread_dir = Path(thread_dir).expanduser().resolve()
     setup_thread_dirs(thread_dir)
     data_dir = thread_dir.parent.parent / "data"
@@ -557,7 +566,3 @@ async def run_app():
         if user_prompt.strip().lower() in ["q", ""]:
             return
         input_prompt = await thread(thread_dir=thread_dir, user_prompt=user_prompt)
-
-
-if __name__ == "__main__":
-    asyncio.run(run_app())

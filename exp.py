@@ -1,9 +1,6 @@
-from dotenv import load_dotenv
-from pydantic_ai import Agent
+import json
+from pathlib import Path
 
-load_dotenv()
-
-
-agent = Agent(model="google-gla:gemini-2.0-flash")
-
-await agent.run(user_prompt="")
+paths = {"path": Path("hmmm.json")}
+file = Path("hmmm.json")
+file.write_text(json.dumps(paths))

@@ -9,6 +9,7 @@ from operate_ai.api import MessageResponse, ThreadInfo, WorkspaceInfo
 
 # API configuration
 API_URL = "http://localhost:8000"
+TIMEOUT = 60
 
 
 # Helper functions for API calls
@@ -55,7 +56,7 @@ async def get_messages(workspace_id: str, thread_id: str) -> list[MessageRespons
 
 
 async def send_message(workspace_id: str, thread_id: str, content: str) -> MessageResponse | None:
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         response = await client.post(
             f"{API_URL}/workspaces/{workspace_id}/threads/{thread_id}/messages/", json={"content": content}
         )
@@ -122,13 +123,18 @@ async def main():
                             await upload_csv_to_workspace(selected_workspace_id, uploaded_file)
                         st.success("Files uploaded!")
 
-            # Thread management
+            # Check if workspace has data files
+            workspace_data_dir = Path("workspaces") / selected_workspace_id / "data"
+            has_data = any(workspace_data_dir.glob("*.csv"))
+
             st.header("Threads")
 
             # Create a new thread
             with st.expander("Create New Thread"):
-                thread_name = st.text_input("Thread Name", key="new_thread_name")
-                if st.button("Create Thread"):
+                if not has_data:
+                    st.warning("Upload at least one CSV file before creating a thread.")
+                thread_name = st.text_input("Thread Name", key="new_thread_name", disabled=not has_data)
+                if st.button("Create Thread", disabled=not has_data):
                     if thread_name:
                         new_thread = await create_thread(selected_workspace_id, thread_name)
                         if new_thread:
@@ -154,33 +160,26 @@ async def main():
         workspace_id = st.session_state.workspace_id
         thread_id = st.session_state.thread_id
 
-        # Display conversation history
-        st.header("Conversation")
+        # Display conversation history using chat_message
         messages = await get_messages(workspace_id, thread_id)
 
         for msg in messages:
-            st.markdown(f"**You:** {msg.content}")
-            st.markdown(f"**AI:** {msg.response}")
-            st.markdown("---")
+            with st.chat_message("user"):
+                st.markdown(msg.content)
+            with st.chat_message("assistant"):
+                st.markdown(msg.response)
 
-        # Input for new message
-        st.header("Send a Message")
-        user_message = st.text_area("Your message:", height=100)
-
-        if st.button("Send"):
-            if user_message:
-                with st.spinner("Processing..."):
-                    response = await send_message(workspace_id, thread_id, user_message)
-                    if response:
-                        st.rerun()
-            else:
-                st.error("Please enter a message")
+        # Input for new message using chat_input
+        if user_message := st.chat_input("Your message..."):
+            # Display the user's message immediately
+            with st.chat_message("user"):
+                st.markdown(user_message)
+            with st.spinner("Processing..."):
+                response = await send_message(workspace_id, thread_id, user_message)
+                if response:
+                    st.rerun()
     else:
         st.info("Please select or create a workspace and thread from the sidebar.")
-
-    # Footer
-    st.markdown("---")
-    st.caption("Operate AI - Financial Analysis Assistant")
 
 
 if __name__ == "__main__":

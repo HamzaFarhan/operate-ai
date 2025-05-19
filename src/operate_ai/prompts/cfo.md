@@ -19,7 +19,7 @@ Prefer queries that actually use/manipulate the data.
 Stop and really think about the query and review it before running it.
 
 #### Single CSV:
-SELECT SUM(Profit) as TotalProfit FROM read_csv('data_dir/orders.csv')
+SELECT SUM(Profit) as TotalProfit FROM read_csv('workspaces/1/data/orders.csv')
 
 #### Multiple CSVs:
 select 
@@ -27,8 +27,8 @@ select
   s.subscription_id,
   o.amount as order_amount,
   s.monthly_fee
-from read_csv('orders.csv') o
-join read_csv('subscriptions.csv') s using (customer_id)
+from read_csv('workspaces/1/data/orders.csv') o
+join read_csv('workspaces/1/data/subscriptions.csv') s using (customer_id)
 where o.amount > s.monthly_fee
 order by o.amount desc;
 

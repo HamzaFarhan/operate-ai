@@ -1,25 +1,18 @@
 import asyncio
+import json
 import uuid
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from operate_ai.cfo_graph import RunSQLResult, WriteSheetResult
 from operate_ai.cfo_graph import thread as run_thread
 
 app = FastAPI(title="Operate AI API")
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Base directory for workspaces
 WORKSPACES_DIR = Path("workspaces")
@@ -57,7 +50,7 @@ class MessageCreate(BaseModel):
 class MessageResponse(BaseModel):
     id: str
     content: str
-    response: str
+    response: RunSQLResult | WriteSheetResult | str
     created_at: str
 
 
@@ -121,6 +114,7 @@ async def create_thread(workspace_id: str, thread_data: ThreadCreate) -> ThreadI
     thread_dir.mkdir(parents=True)
     (thread_dir / "analysis").mkdir()
     (thread_dir / "results").mkdir()
+    (thread_dir / "states").mkdir()
 
     # Save thread metadata
     metadata: dict[str, Any] = {
@@ -130,7 +124,7 @@ async def create_thread(workspace_id: str, thread_data: ThreadCreate) -> ThreadI
         "created_at": str(asyncio.get_event_loop().time()),
         "messages": [],
     }
-    (thread_dir / "metadata.json").write_text(str(metadata))
+    (thread_dir / "metadata.json").write_text(json.dumps(metadata))
 
     return ThreadInfo(
         id=thread_id,
@@ -202,19 +196,18 @@ async def create_message(workspace_id: str, thread_id: str, message: MessageCrea
             }
 
         message_id = str(uuid.uuid4())
+        created_at = str(asyncio.get_event_loop().time())
         message_data = {
             "id": message_id,
             "content": message.content,
-            "response": response,
-            "created_at": str(asyncio.get_event_loop().time()),
+            "response": response if isinstance(response, str) else "Please Review",
+            "created_at": created_at,
         }
 
         metadata["messages"].append(message_data)
-        metadata_file.write_text(str(metadata))
+        metadata_file.write_text(json.dumps(metadata))
 
-        return MessageResponse(
-            id=message_id, content=message.content, response=response, created_at=message_data["created_at"]
-        )
+        return MessageResponse(id=message_id, content=message.content, response=response, created_at=created_at)
 
     except Exception as e:
         logger.error(f"Error processing message: {e}")

@@ -1,6 +1,5 @@
-import json
-from pathlib import Path
+import pandas as pd
 
-paths = {"path": Path("hmmm.json")}
-file = Path("hmmm.json")
-file.write_text(json.dumps(paths))
+df = pd.read_excel("/Users/hamza/dev/operate-ai/saas_scenario_ltv_cac_to_ltv.xlsx", sheet_name=None)
+
+df.keys()

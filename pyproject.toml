@@ -27,6 +27,7 @@ dependencies = [
     "logfire>=3.14.1",
     "sqlmodel>=0.0.24",
     "streamlit>=1.45.1",
+    "websocket-client>=1.8.0",
 ]
 
 [tool.uv.sources]

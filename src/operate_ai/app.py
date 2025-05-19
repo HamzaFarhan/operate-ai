@@ -3,18 +3,22 @@ import io
 import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import httpx
 import pandas as pd
 import streamlit as st
+from loguru import logger
 from pydantic import ValidationError
 
-from operate_ai.api import MessageResponse, ThreadInfo, WorkspaceInfo
+from operate_ai.api import ChatMessage, ThreadInfo, WorkspaceInfo
 from operate_ai.cfo_graph import RunSQLResult, WriteSheetResult
 
 # API configuration
 API_URL = "http://localhost:8000"
 TIMEOUT = 60
+
+st.set_page_config(layout="wide")
 
 
 # Helper functions for API calls
@@ -43,30 +47,36 @@ async def get_threads(workspace_id: str) -> list[ThreadInfo]:
         return []
 
 
-async def create_thread(workspace_id: str, name: str) -> ThreadInfo | None:
+async def create_thread(workspace_id: str, name: str, prev_state_path: str | None = None) -> ThreadInfo | None:
     async with httpx.AsyncClient() as client:
-        response = await client.post(f"{API_URL}/workspaces/{workspace_id}/threads/", json={"name": name})
+        response = await client.post(
+            f"{API_URL}/workspaces/{workspace_id}/threads/",
+            json={"name": name, "prev_state_path": prev_state_path},
+        )
         if response.status_code == 200:
             return ThreadInfo(**response.json())
         st.error(f"Failed to create thread: {response.text}")
         return None
 
 
-async def get_messages(workspace_id: str, thread_id: str) -> list[MessageResponse]:
+async def get_messages(workspace_id: str, thread_id: str) -> list[ChatMessage]:
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{API_URL}/workspaces/{workspace_id}/threads/{thread_id}/messages/")
         if response.status_code == 200:
-            return [MessageResponse(**message) for message in response.json()]
+            return [ChatMessage(**message) for message in response.json()]
         return []
 
 
-async def send_message(workspace_id: str, thread_id: str, content: str) -> MessageResponse | None:
+async def send_message(
+    workspace_id: str, thread_id: str, content: str, prev_state_path: str | None = None
+) -> ChatMessage | None:
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         response = await client.post(
-            f"{API_URL}/workspaces/{workspace_id}/threads/{thread_id}/messages/", json={"content": content}
+            f"{API_URL}/workspaces/{workspace_id}/threads/{thread_id}/messages/",
+            json={"content": content, "prev_state_path": prev_state_path},
         )
         if response.status_code == 200:
-            return MessageResponse(**response.json())
+            return ChatMessage(**response.json())
         st.error(f"Failed to send message: {response.text}")
         return None
 
@@ -112,6 +122,8 @@ async def main():
         st.session_state.workspace_id = None
     if "thread_id" not in st.session_state:
         st.session_state.thread_id = None
+    if "thread_name" not in st.session_state:
+        st.session_state.thread_name = None
 
     st.title("Operate AI")
 
@@ -168,6 +180,7 @@ async def main():
                         new_thread = await create_thread(selected_workspace_id, thread_name)
                         if new_thread:
                             st.session_state.thread_id = new_thread.id
+                            st.session_state.thread_name = thread_name
                             st.success(f"Created thread: {thread_name}")
                             st.rerun()
                     else:
@@ -178,57 +191,75 @@ async def main():
             thread_options = {t.name: t.id for t in threads}
 
             if thread_options:
-                selected_thread_name = st.selectbox("Select Thread", options=list(thread_options.keys()), index=0)
+                selected_thread_name = st.selectbox(
+                    "Select Thread", options=list(thread_options.keys()), index=len(thread_options) - 1
+                )
 
                 if selected_thread_name:
                     selected_thread_id = thread_options[selected_thread_name]
                     st.session_state.thread_id = selected_thread_id
+                    st.session_state.thread_name = selected_thread_name
 
     # --- Main chat area ---
     if st.session_state.workspace_id and st.session_state.thread_id:
         workspace_id = st.session_state.workspace_id
         thread_id = st.session_state.thread_id
-
+        thread_name = st.session_state.thread_name
         messages = await get_messages(workspace_id, thread_id)
 
-        for msg in messages:
-            with st.chat_message("user"):
-                st.markdown(msg.content)
-            with st.chat_message("assistant"):
-                resp = parse_response(msg.response)
-                if isinstance(resp, RunSQLResult):
-                    st.markdown("Ran an SQL query, please review")
-                    with st.expander("Show Progress"):
-                        tabs = st.tabs(["SQL Command", "CSV Preview"])
-                        with tabs[0]:
-                            sql_path = resp.sql_path
+        for i, msg in enumerate(messages):
+            if msg.role == "user":
+                with st.chat_message("user"):
+                    st.markdown(msg.content)
+            else:
+                with st.chat_message("assistant"):
+                    resp = parse_response(msg.content)
+                    if isinstance(resp, RunSQLResult):
+                        st.markdown("Ran an SQL query, please review")
+                        with st.expander("Show Progress"):
+                            tabs = st.tabs(["SQL Command", "CSV Preview"])
+                            with tabs[0]:
+                                sql_path = resp.sql_path
+                                try:
+                                    sql_text = Path(sql_path).read_text()
+                                except Exception:
+                                    sql_text = "(Could not read SQL file)"
+                                st.code(sql_text, language="sql")
+                            with tabs[1]:
+                                csv_path = resp.csv_path
+                                try:
+                                    df = pd.read_csv(csv_path)  # type: ignore
+                                    st.dataframe(df)  # type: ignore
+                                except Exception:
+                                    st.error("Could not read CSV file.")
+                    elif isinstance(resp, WriteSheetResult):
+                        st.markdown("Wrote the results to a Workbook, please review")
+                        with st.expander("Show Results"):
+                            excel_path = resp.file_path
                             try:
-                                sql_text = Path(sql_path).read_text()
+                                excel_data: dict[str, pd.DataFrame] = pd.read_excel(excel_path, sheet_name=None)  # type: ignore
+                                sheet_names = list(excel_data.keys())
+                                sheet_tabs = st.tabs(sheet_names)
+                                for tab, sheet_name in zip(sheet_tabs, sheet_names):
+                                    with tab:
+                                        st.dataframe(excel_data[sheet_name])  # type: ignore
                             except Exception:
-                                sql_text = "(Could not read SQL file)"
-                            st.code(sql_text, language="sql")
-                        with tabs[1]:
-                            csv_path = resp.csv_path
-                            try:
-                                df = pd.read_csv(csv_path)  # type: ignore
-                                st.dataframe(df)  # type: ignore
-                            except Exception:
-                                st.error("Could not read CSV file.")
-                elif isinstance(resp, WriteSheetResult):
-                    st.markdown("Wrote the results to a Workbook, please review")
-                    with st.expander("Show Results"):
-                        excel_path = resp.file_path
-                        try:
-                            excel_data: dict[str, pd.DataFrame] = pd.read_excel(excel_path, sheet_name=None)  # type: ignore
-                            sheet_names = list(excel_data.keys())
-                            sheet_tabs = st.tabs(sheet_names)
-                            for tab, sheet_name in zip(sheet_tabs, sheet_names):
-                                with tab:
-                                    st.dataframe(excel_data[sheet_name])  # type: ignore
-                        except Exception:
-                            st.error("Could not read Excel file.")
-                else:
-                    st.markdown(resp)
+                                st.error("Could not read Excel file.")
+                    else:
+                        st.markdown(resp)
+                    if st.button("New Thread From Here", key=f"new_thread_from_here_{thread_id}_{i}"):
+                        logger.info(f"Creating new thread from here: {msg.state_path}")
+                        new_thread_name = f"{thread_name}_{uuid4()}"
+                        new_thread = await create_thread(
+                            workspace_id, new_thread_name, prev_state_path=msg.state_path
+                        )
+                        if new_thread:
+                            st.session_state.thread_id = new_thread.id
+                            st.session_state.thread_name = new_thread_name
+                            st.success(f"Created thread: {new_thread_name}")
+                            st.rerun()
+                        else:
+                            st.error("Failed to create thread")
 
         # Input for new message using chat_input
         if user_message := st.chat_input("Your message..."):

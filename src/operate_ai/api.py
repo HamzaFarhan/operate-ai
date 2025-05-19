@@ -1,14 +1,14 @@
 import asyncio
-import json
+import shutil
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from operate_ai.cfo_graph import RunSQLResult, WriteSheetResult
+from operate_ai.cfo_graph import RunSQLResult, WriteSheetResult, get_prev_state_path, load_prev_state
 from operate_ai.cfo_graph import thread as run_thread
 
 app = FastAPI(title="Operate AI API")
@@ -33,6 +33,7 @@ class WorkspaceInfo(BaseModel):
 
 class ThreadCreate(BaseModel):
     name: str = Field(..., description="Name of the thread")
+    prev_state_path: str | None = Field(None, description="Path to the previous state")
 
 
 class ThreadInfo(BaseModel):
@@ -40,18 +41,17 @@ class ThreadInfo(BaseModel):
     name: str
     workspace_id: str
     created_at: str
-    message_count: int
 
 
 class MessageCreate(BaseModel):
     content: str = Field(..., description="Content of the message")
+    prev_state_path: str | None
 
 
-class MessageResponse(BaseModel):
-    id: str
-    content: str
-    response: RunSQLResult | WriteSheetResult | str
-    created_at: str
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: RunSQLResult | WriteSheetResult | str
+    state_path: str
 
 
 # Workspace endpoints
@@ -115,24 +115,36 @@ async def create_thread(workspace_id: str, thread_data: ThreadCreate) -> ThreadI
     (thread_dir / "analysis").mkdir()
     (thread_dir / "results").mkdir()
     (thread_dir / "states").mkdir()
+    logger.info(
+        f"Creating thread {thread_data.name} with prev_state_path {thread_data.prev_state_path} and id {thread_id}"
+    )
+    if thread_data.prev_state_path:
+        prev_thread_id = Path(thread_data.prev_state_path).parent.parent.name
+        new_state_path = (thread_dir / "states") / Path(thread_data.prev_state_path).name
+        try:
+            prev_state = Path(thread_data.prev_state_path).read_text()
+            state_content = prev_state.replace(prev_thread_id, thread_id)
+            new_state_path.write_text(state_content)
+            prev_analysis_dir = Path(thread_data.prev_state_path).parent.parent / "analysis"
+            new_analysis_dir = thread_dir / "analysis"
+            for file in prev_analysis_dir.iterdir():
+                shutil.copy2(file, new_analysis_dir / file.name)
+            prev_results_dir = Path(thread_data.prev_state_path).parent.parent / "results"
+            new_results_dir = thread_dir / "results"
+            for file in prev_results_dir.iterdir():
+                shutil.copy2(file, new_results_dir / file.name)
+        except Exception as e:
+            logger.error(f"Error copying previous state: {e}")
 
-    # Save thread metadata
-    metadata: dict[str, Any] = {
-        "id": thread_id,
-        "name": thread_data.name,
-        "workspace_id": workspace_id,
-        "created_at": str(asyncio.get_event_loop().time()),
-        "messages": [],
-    }
-    (thread_dir / "metadata.json").write_text(json.dumps(metadata))
-
-    return ThreadInfo(
+    thread_info = ThreadInfo(
         id=thread_id,
         name=thread_data.name,
         workspace_id=workspace_id,
-        created_at=metadata["created_at"],
-        message_count=0,
+        created_at=str(asyncio.get_event_loop().time()),
     )
+
+    (thread_dir / "metadata.json").write_text(thread_info.model_dump_json())
+    return thread_info
 
 
 @app.get("/workspaces/{workspace_id}/threads/", response_model=list[ThreadInfo])
@@ -146,20 +158,10 @@ async def list_threads(workspace_id: str) -> list[ThreadInfo]:
     threads_dir = workspace_dir / "threads"
 
     for thread_dir in threads_dir.iterdir():
-        if thread_dir.is_dir() and (thread_dir / "metadata.json").exists():
+        states_dir = thread_dir / "states"
+        if thread_dir.is_dir() and states_dir.exists():
             try:
-                metadata = eval((thread_dir / "metadata.json").read_text())
-                message_count = len(metadata.get("messages", []))
-
-                threads.append(
-                    ThreadInfo(
-                        id=metadata["id"],
-                        name=metadata["name"],
-                        workspace_id=workspace_id,
-                        created_at=metadata["created_at"],
-                        message_count=message_count,
-                    )
-                )
+                threads.append(ThreadInfo.model_validate_json((thread_dir / "metadata.json").read_text()))
             except Exception as e:
                 logger.error(f"Error reading thread {thread_dir}: {e}")
 
@@ -167,7 +169,7 @@ async def list_threads(workspace_id: str) -> list[ThreadInfo]:
 
 
 # Message endpoints
-@app.post("/workspaces/{workspace_id}/threads/{thread_id}/messages/", response_model=MessageResponse)
+@app.post("/workspaces/{workspace_id}/threads/{thread_id}/messages/", response_model=ChatMessage)
 async def create_message(workspace_id: str, thread_id: str, message: MessageCreate):
     workspace_dir = WORKSPACES_DIR / workspace_id
     thread_dir = workspace_dir / "threads" / thread_id
@@ -177,45 +179,18 @@ async def create_message(workspace_id: str, thread_id: str, message: MessageCrea
 
     if not thread_dir.exists():
         raise HTTPException(status_code=404, detail="Thread not found")
-
-    # Run the thread with the message content
     try:
-        response = await run_thread(thread_dir=thread_dir, user_prompt=message.content)
-
-        # Update thread metadata with new message
-        metadata_file = thread_dir / "metadata.json"
-        if metadata_file.exists():
-            metadata = eval(metadata_file.read_text())
-        else:
-            metadata: dict[str, Any] = {
-                "id": thread_id,
-                "name": "Unknown",
-                "workspace_id": workspace_id,
-                "created_at": str(asyncio.get_event_loop().time()),
-                "messages": [],
-            }
-
-        message_id = str(uuid.uuid4())
-        created_at = str(asyncio.get_event_loop().time())
-        message_data = {
-            "id": message_id,
-            "content": message.content,
-            "response": response if isinstance(response, str) else response.model_dump_json(),
-            "created_at": created_at,
-        }
-
-        metadata["messages"].append(message_data)
-        metadata_file.write_text(json.dumps(metadata))
-
-        return MessageResponse(id=message_id, content=message.content, response=response, created_at=created_at)
-
+        response = await run_thread(
+            thread_dir=thread_dir, user_prompt=message.content, prev_state_path=message.prev_state_path
+        )
+        return ChatMessage(role="assistant", content=response, state_path=str(get_prev_state_path(thread_dir)))
     except Exception as e:
         logger.error(f"Error processing message: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
 
 
-@app.get("/workspaces/{workspace_id}/threads/{thread_id}/messages/", response_model=list[MessageResponse])
-async def list_messages(workspace_id: str, thread_id: str) -> list[MessageResponse]:
+@app.get("/workspaces/{workspace_id}/threads/{thread_id}/messages/", response_model=list[ChatMessage])
+async def list_messages(workspace_id: str, thread_id: str) -> list[ChatMessage]:
     workspace_dir = WORKSPACES_DIR / workspace_id
     thread_dir = workspace_dir / "threads" / thread_id
 
@@ -224,20 +199,11 @@ async def list_messages(workspace_id: str, thread_id: str) -> list[MessageRespon
 
     if not thread_dir.exists():
         raise HTTPException(status_code=404, detail="Thread not found")
-
-    metadata_file = thread_dir / "metadata.json"
-    if not metadata_file.exists():
-        return []
-
     try:
-        metadata = eval(metadata_file.read_text())
-        messages = metadata.get("messages", [])
-
+        prev_state = await load_prev_state(thread_dir=thread_dir)
         return [
-            MessageResponse(
-                id=msg["id"], content=msg["content"], response=msg["response"], created_at=msg["created_at"]
-            )
-            for msg in messages
+            ChatMessage(role=message["role"], content=message["content"], state_path=message["state_path"])
+            for message in prev_state.chat_messages
         ]
     except Exception as e:
         logger.error(f"Error reading messages: {e}")

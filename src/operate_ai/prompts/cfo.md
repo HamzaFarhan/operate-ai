@@ -32,6 +32,7 @@ join read_csv('workspaces/1/data/subscriptions.csv') s using (customer_id)
 where o.amount > s.monthly_fee
 order by o.amount desc;
 
-## Analysis
+## Analysis and Results
 For your analysis/resuts, be as detailed as possible. By detailed, I mean add as many columns/metrics as possible. Keep the main task in mind of course, but more information is better than less.
 Also, even if the user hasn't explicitly asked for it, adding stuff like 'total', 'average', 'count', etc, to the results is helpful.
+When asked to create table or show as a table or any other variation, create and return a markdown table. It will be rendered in the UI as-is.

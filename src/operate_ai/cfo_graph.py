@@ -8,7 +8,8 @@ from collections.abc import Hashable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Self
+from typing import Any, Literal, Self, TypedDict
+from uuid import uuid4
 
 import duckdb
 import logfire
@@ -37,8 +38,15 @@ class Success(BaseModel):
     message: Any
 
 
+class ChatMessage(TypedDict):
+    role: Literal["user", "assistant"]
+    content: RunSQLResult | WriteSheetResult | str
+    state_path: str
+
+
 @dataclass
 class GraphState:
+    chat_messages: list[ChatMessage] = field(default_factory=list)
     message_history: list[ModelMessage] = field(default_factory=list)
     run_sql_attempts: int = 0
     write_sheet_attempts: int = 0
@@ -48,6 +56,7 @@ class AgentDeps(BaseModel):
     data_dir: str
     analysis_dir: str
     results_dir: str
+    state_path: str
 
     @model_validator(mode="after")
     def create_dirs(self: Self) -> Self:
@@ -205,6 +214,8 @@ async def run_sql(
         )
         file_path = file_path.expanduser().resolve().with_suffix(".csv")
         file_path.parent.mkdir(parents=True, exist_ok=True)
+        if file_path.exists():
+            file_path = file_path.with_stem(f"{file_path.stem}_{uuid4()}")
 
         df.to_csv(file_path, index=False)
         file_path.with_suffix(".sql").write_text(query_replaced)
@@ -242,6 +253,9 @@ class RunSQLNode(BaseNode[GraphState, AgentDeps, RunSQLResult]):
                 query=self.query,
                 preview_rows=self.preview_rows,
                 file_name=self.file_name,
+            )
+            ctx.state.chat_messages.append(
+                {"role": "assistant", "content": sql_result, "state_path": ctx.deps.state_path}
             )
             ctx.state.message_history.append(user_message(sql_result.model_dump_json()))
             return End(data=sql_result)
@@ -356,6 +370,9 @@ class WriteSheetNode(BaseNode[GraphState, AgentDeps, WriteSheetResult]):
                 sheet_name=self.sheet_name,
                 workbook_name=self.workbook_name,
             )
+            ctx.state.chat_messages.append(
+                {"role": "assistant", "content": write_sheet_result, "state_path": ctx.deps.state_path}
+            )
             ctx.state.message_history.append(user_message(write_sheet_result.model_dump_json()))
             return End(data=write_sheet_result)
         except Exception as e:
@@ -399,6 +416,9 @@ class UserInteractionNode(BaseNode[GraphState, AgentDeps, str]):
     message: str
 
     async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> End[str]:  # noqa: ARG002
+        ctx.state.chat_messages.append(
+            {"role": "assistant", "content": self.message, "state_path": ctx.deps.state_path}
+        )
         return End(data=self.message)
 
 
@@ -418,6 +438,9 @@ class TaskResultNode(BaseNode[GraphState, AgentDeps, str]):
     message: str
 
     async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> End[str]:  # noqa: ARG002
+        ctx.state.chat_messages.append(
+            {"role": "assistant", "content": self.message, "state_path": ctx.deps.state_path}
+        )
         return End(data=self.message)
 
 
@@ -426,9 +449,9 @@ class TaskResultNode(BaseNode[GraphState, AgentDeps, str]):
 # )
 
 fallback_model = FallbackModel(
+    "openai:gpt-4.1",
     "openai:gpt-4.1-mini",
     "google-gla:gemini-2.0-flash",
-    "openai:gpt-4.1",
     "anthropic:claude-3-5-sonnet-latest",
 )
 
@@ -464,6 +487,10 @@ class RunAgentNode(BaseNode[GraphState, AgentDeps, RunSQLResult | WriteSheetResu
         | TaskResultNode
         | End[RunSQLResult | WriteSheetResult | str]
     ):
+        if self.user_prompt:
+            ctx.state.chat_messages.append(
+                {"role": "user", "content": self.user_prompt, "state_path": ctx.deps.state_path}
+            )
         error_result = End(data="Ran into an error. Please try again.")
         try:
             async with agent.run_mcp_servers():
@@ -502,10 +529,10 @@ graph = Graph(
     nodes=(RunAgentNode, RunSQLNode, WriteSheetNode, UserInteractionNode, TaskResultNode),
     name="CFO Graph",
 )
-try:
-    graph.mermaid_save(Path("cfo_graph.jpg"), direction="LR", highlighted_nodes=RunAgentNode)
-except Exception as e:
-    logger.error(f"Error saving graph: {e}")
+# try:
+#     graph.mermaid_save(Path("cfo_graph.jpg"), direction="LR", highlighted_nodes=RunAgentNode)
+# except Exception as e:
+#     logger.error(f"Error saving graph: {e}")
 
 
 def setup_thread_dirs(thread_dir: Path | str):
@@ -523,34 +550,60 @@ def setup_thread_dirs(thread_dir: Path | str):
     return
 
 
-async def load_state(persistence: FileStatePersistence) -> GraphState:
+async def load_state(
+    persistence: FileStatePersistence[GraphState, RunSQLResult | WriteSheetResult | str],
+) -> GraphState:
     if snapshot := await persistence.load_next():
         return snapshot.state
     snapshots = await persistence.load_all()
-    return GraphState(message_history=snapshots[-1].state.message_history) if snapshots else GraphState()
+    return (
+        GraphState(
+            chat_messages=snapshots[-1].state.chat_messages, message_history=snapshots[-1].state.message_history
+        )
+        if snapshots
+        else GraphState()
+    )
 
 
-async def thread(thread_dir: Path | str, user_prompt: str) -> RunSQLResult | WriteSheetResult | str:
+def get_prev_state_path(thread_dir: Path | str) -> Path | None:
+    thread_dir = Path(thread_dir).expanduser().resolve()
+    states_dir = thread_dir / "states"
+    prev_states = sorted(
+        states_dir.glob("*.json"), key=lambda p: datetime.strptime(p.stem, "%d-%m-%Y_%H-%M-%S"), reverse=True
+    )
+    return prev_states[0] if prev_states else None
+
+
+async def load_prev_state(thread_dir: Path | str, prev_state_path: Path | str | None = None) -> GraphState:
+    prev_state_path = Path(prev_state_path) if prev_state_path else get_prev_state_path(thread_dir)
+    if prev_state_path:
+        prev_persistence = FileStatePersistence(json_file=prev_state_path.expanduser().resolve())
+        prev_persistence.set_graph_types(graph=graph)
+        return await load_state(persistence=prev_persistence)
+    return GraphState()
+
+
+async def thread(
+    thread_dir: Path | str, user_prompt: str, prev_state_path: Path | str | None = None
+) -> RunSQLResult | WriteSheetResult | str:
     thread_dir = Path(thread_dir).expanduser().resolve()
     setup_thread_dirs(thread_dir)
     data_dir = thread_dir.parent.parent / "data"
     analysis_dir = thread_dir / "analysis"
     results_dir = thread_dir / "results"
     states_dir = thread_dir / "states"
-    prev_states = sorted(
-        states_dir.glob("*.json"), key=lambda p: datetime.strptime(p.stem, "%d-%m-%Y_%H-%M-%S"), reverse=True
-    )
-    if prev_states:
-        prev_persistence = FileStatePersistence(json_file=prev_states[0].expanduser().resolve())
-        prev_persistence.set_graph_types(graph=graph)
-        state = await load_state(persistence=prev_persistence)
-    else:
-        state = GraphState()
+
+    state = await load_prev_state(thread_dir=thread_dir, prev_state_path=prev_state_path)
     persistence_path = states_dir / f"{datetime.now().strftime('%d-%m-%Y_%H-%M-%S')}.json"
     persistence = FileStatePersistence(json_file=persistence_path.expanduser().resolve())
     persistence.set_graph_types(graph=graph)
 
-    deps = AgentDeps(data_dir=str(data_dir), analysis_dir=str(analysis_dir), results_dir=str(results_dir))
+    deps = AgentDeps(
+        data_dir=str(data_dir),
+        analysis_dir=str(analysis_dir),
+        results_dir=str(results_dir),
+        state_path=str(persistence_path),
+    )
     res = await graph.run(
         start_node=RunAgentNode(user_prompt=user_prompt), state=state, deps=deps, persistence=persistence
     )
@@ -560,7 +613,7 @@ async def thread(thread_dir: Path | str, user_prompt: str) -> RunSQLResult | Wri
 async def run_app():
     input_prompt = ""
     while True:
-        # user_prompt = "How many customers in 2023 had a monthly plan?"
+        # user_prompt = "How many customers in 2022 signed up for a monthly plan? and how many in 2023? compile in an excel sheet"
         thread_dir = Path("/Users/hamza/dev/operate-ai/workspaces/1/threads/1")
         user_prompt = input(f"{input_prompt} > ")
         if user_prompt.strip().lower() in ["q", ""]:

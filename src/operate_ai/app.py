@@ -1,11 +1,16 @@
 import asyncio
 import io
+import json
 from pathlib import Path
+from typing import Any
 
 import httpx
+import pandas as pd
 import streamlit as st
+from pydantic import ValidationError
 
 from operate_ai.api import MessageResponse, ThreadInfo, WorkspaceInfo
+from operate_ai.cfo_graph import RunSQLResult, WriteSheetResult
 
 # API configuration
 API_URL = "http://localhost:8000"
@@ -76,6 +81,31 @@ async def upload_csv_to_workspace(workspace_id: str, file: io.BytesIO):
     file_path.write_bytes(file.getbuffer())
 
 
+def parse_response(resp: Any) -> RunSQLResult | WriteSheetResult | str:
+    # If already correct type, return as is
+    if isinstance(resp, (RunSQLResult, WriteSheetResult)):
+        return resp
+    # If dict, try to parse
+    if isinstance(resp, dict):
+        for cls in (RunSQLResult, WriteSheetResult):
+            try:
+                return cls.model_validate(resp)
+            except ValidationError:
+                continue
+    # If string, try to parse as JSON then as above
+    if isinstance(resp, str):
+        try:
+            data = json.loads(resp)
+            for cls in (RunSQLResult, WriteSheetResult):
+                try:
+                    return cls.model_validate(data)
+                except ValidationError:
+                    continue
+        except Exception:
+            pass
+    return str(resp)  # type: ignore
+
+
 async def main():
     # Initialize session state
     if "workspace_id" not in st.session_state:
@@ -83,10 +113,9 @@ async def main():
     if "thread_id" not in st.session_state:
         st.session_state.thread_id = None
 
-    # App title
     st.title("Operate AI")
 
-    # Sidebar for workspace and thread selection
+    # --- Sidebar for workspace/thread/data ---
     with st.sidebar:
         st.header("Workspaces")
 
@@ -155,23 +184,55 @@ async def main():
                     selected_thread_id = thread_options[selected_thread_name]
                     st.session_state.thread_id = selected_thread_id
 
-    # Main content area
+    # --- Main chat area ---
     if st.session_state.workspace_id and st.session_state.thread_id:
         workspace_id = st.session_state.workspace_id
         thread_id = st.session_state.thread_id
 
-        # Display conversation history using chat_message
         messages = await get_messages(workspace_id, thread_id)
 
         for msg in messages:
             with st.chat_message("user"):
                 st.markdown(msg.content)
             with st.chat_message("assistant"):
-                st.markdown(msg.response)
+                resp = parse_response(msg.response)
+                if isinstance(resp, RunSQLResult):
+                    st.markdown("Ran an SQL query, please review")
+                    with st.expander("Show Progress"):
+                        tabs = st.tabs(["SQL Command", "CSV Preview"])
+                        with tabs[0]:
+                            sql_path = resp.sql_path
+                            try:
+                                sql_text = Path(sql_path).read_text()
+                            except Exception:
+                                sql_text = "(Could not read SQL file)"
+                            st.code(sql_text, language="sql")
+                        with tabs[1]:
+                            csv_path = resp.csv_path
+                            try:
+                                df = pd.read_csv(csv_path)  # type: ignore
+                                st.dataframe(df)  # type: ignore
+                            except Exception:
+                                st.error("Could not read CSV file.")
+                elif isinstance(resp, WriteSheetResult):
+                    st.markdown("Wrote the results to a Workbook, please review")
+                    with st.expander("Show Results"):
+                        excel_path = resp.file_path
+                        try:
+                            excel_data: dict[str, pd.DataFrame] = pd.read_excel(excel_path, sheet_name=None)  # type: ignore
+                            sheet_names = list(excel_data.keys())
+                            sheet_tabs = st.tabs(sheet_names)
+                            for tab, sheet_name in zip(sheet_tabs, sheet_names):
+                                with tab:
+                                    st.write(f"### {sheet_name}")  # type: ignore
+                                    st.dataframe(excel_data[sheet_name])  # type: ignore
+                        except Exception:
+                            st.error("Could not read Excel file.")
+                else:
+                    st.markdown(resp)
 
         # Input for new message using chat_input
         if user_message := st.chat_input("Your message..."):
-            # Display the user's message immediately
             with st.chat_message("user"):
                 st.markdown(user_message)
             with st.spinner("Processing..."):

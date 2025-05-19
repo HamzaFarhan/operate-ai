@@ -200,7 +200,7 @@ async def create_message(workspace_id: str, thread_id: str, message: MessageCrea
         message_data = {
             "id": message_id,
             "content": message.content,
-            "response": response if isinstance(response, str) else "Please Review",
+            "response": response if isinstance(response, str) else response.model_dump_json(),
             "created_at": created_at,
         }
 

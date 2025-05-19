@@ -1,5 +1,9 @@
-d = {"a": 1, "b": 2}
+from dotenv import load_dotenv
+from pydantic_ai import Agent
 
-d.setdefault("c", [1]).remove(1)
+load_dotenv()
 
-print(d)
+
+agent = Agent(model="google-gla:gemini-2.0-flash")
+
+await agent.run(user_prompt="")

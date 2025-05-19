@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import re
@@ -15,7 +17,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.mcp import MCPServerStdio
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart, UserPromptPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from pydantic_graph.persistence.file import FileStatePersistence
@@ -24,10 +26,15 @@ logfire.configure()
 
 SQL_TIMEOUT_SECONDS = 5
 PREVIEW_ROWS = 10
+MAX_RETRIES = 10
 
 
 def user_message(content: str) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=content)])
+
+
+def retry_message(content: str, tool_name: str | None = None) -> ModelRequest:
+    return ModelRequest(parts=[RetryPromptPart(content=content, tool_name=tool_name)])
 
 
 class Success(BaseModel):
@@ -37,6 +44,8 @@ class Success(BaseModel):
 @dataclass
 class GraphState:
     message_history: list[ModelMessage] = field(default_factory=list)
+    run_sql_attempts: int = 0
+    write_sheet_attempts: int = 0
 
 
 class AgentDeps(BaseModel):
@@ -139,7 +148,9 @@ class RunSQLResult(BaseModel):
     row_count: int
 
 
-def run_sql(analysis_dir: str, query: str, preview_rows: int = 2, file_name: str | None = None) -> RunSQLResult:
+async def run_sql(
+    analysis_dir: str, query: str, preview_rows: int = 2, file_name: str | None = None
+) -> RunSQLResult:
     """
     1. Runs an SQL query on csv file(s) using duckdb
     2. Writes the full result to disk
@@ -196,7 +207,7 @@ def run_sql(analysis_dir: str, query: str, preview_rows: int = 2, file_name: str
         )
 
     try:
-        return asyncio.run(asyncio.wait_for(_run_with_timeout(), timeout=SQL_TIMEOUT_SECONDS))
+        return await asyncio.wait_for(_run_with_timeout(), timeout=SQL_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
         raise ModelRetry(f"SQL query execution timed out after {SQL_TIMEOUT_SECONDS} seconds")
     except FileNotFoundError as e:
@@ -214,21 +225,27 @@ class RunSQLNode(BaseNode[GraphState, AgentDeps, str]):
     preview_rows: int = 2
     file_name: str | None = None
 
-    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> End[str]:
-        sql_result = run_sql(
-            analysis_dir=ctx.deps.analysis_dir,
-            query=self.query,
-            preview_rows=self.preview_rows,
-            file_name=self.file_name,
-        )
-        ctx.state.message_history.append(user_message(sql_result.model_dump_json()))
-        file_path = Path(sql_result.file_path).expanduser().resolve()
-        input_prompt = (
-            f"Ran SQL query: {file_path.with_suffix('.sql')}\n"
-            f"Results are in the file: {file_path}\n"
-            "Please Review. Press Enter to continue. Press Q to quit."
-        )
-        return End(data=input_prompt)
+    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> RunAgentNode | End[str]:
+        try:
+            sql_result = await run_sql(
+                analysis_dir=ctx.deps.analysis_dir,
+                query=self.query,
+                preview_rows=self.preview_rows,
+                file_name=self.file_name,
+            )
+            ctx.state.message_history.append(user_message(sql_result.model_dump_json()))
+            file_path = Path(sql_result.file_path).expanduser().resolve()
+            input_prompt = (
+                f"Ran SQL query: {file_path.with_suffix('.sql')}\n"
+                f"Results are in the file: {file_path}\n"
+                "Please Review. Press Enter to continue. Press Q to quit."
+            )
+            return End(data=input_prompt)
+        except Exception as e:
+            logger.error(f"Error running SQL query: {e}")
+            ctx.state.message_history.append(retry_message(str(e), tool_name="RunSQLNode"))
+            ctx.state.run_sql_attempts += 1
+            return RunAgentNode(user_prompt="")
 
 
 def calculate_sum(values: list[float]) -> float:
@@ -325,17 +342,25 @@ class WriteSheetNode(BaseNode[GraphState, AgentDeps, str]):
     sheet_name: str
     workbook_name: str | None = None
 
-    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> End[str]:
-        write_sheet_result = write_sheet_from_file(
-            results_dir=ctx.deps.results_dir,
-            file_path=self.file_path,
-            sheet_name=self.sheet_name,
-            workbook_name=self.workbook_name,
-        )
-        ctx.state.message_history.append(user_message(write_sheet_result.model_dump_json()))
-        file_path = Path(write_sheet_result.file_path).expanduser().resolve()
-        input_prompt = f"Wrote to workbook: {file_path}\nPlease Review. Press Enter to continue. Press Q to quit."
-        return End(data=input_prompt)
+    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> RunAgentNode | End[str]:
+        try:
+            write_sheet_result = write_sheet_from_file(
+                results_dir=ctx.deps.results_dir,
+                file_path=self.file_path,
+                sheet_name=self.sheet_name,
+                workbook_name=self.workbook_name,
+            )
+            ctx.state.message_history.append(user_message(write_sheet_result.model_dump_json()))
+            file_path = Path(write_sheet_result.file_path).expanduser().resolve()
+            input_prompt = (
+                f"Wrote to workbook: {file_path}\nPlease Review. Press Enter to continue. Press Q to quit."
+            )
+            return End(data=input_prompt)
+        except Exception as e:
+            logger.error(f"Error writing sheet: {e}")
+            ctx.state.message_history.append(retry_message(str(e), tool_name="WriteSheetNode"))
+            ctx.state.write_sheet_attempts += 1
+            return RunAgentNode(user_prompt="")
 
 
 class UserInteraction(BaseModel):
@@ -399,10 +424,10 @@ class TaskResultNode(BaseNode[GraphState, AgentDeps, str]):
 # )
 
 fallback_model = FallbackModel(
+    "openai:gpt-4.1-mini",
     "google-gla:gemini-2.0-flash",
     "openai:gpt-4.1",
     "anthropic:claude-3-5-sonnet-latest",
-    "openai:gpt-4.1-mini",
 )
 
 agent = Agent(
@@ -413,7 +438,7 @@ agent = Agent(
         add_dirs,
     ],
     deps_type=AgentDeps,
-    retries=10,
+    retries=MAX_RETRIES,
     tools=[list_csv_files, calculate_sum, calculate_difference, calculate_mean],
     mcp_servers=[thinking_server],
     output_type=TaskResult | UserInteraction | RunSQL | WriteSheetFromFile,  # type: ignore
@@ -431,63 +456,92 @@ class RunAgentNode(BaseNode[GraphState, AgentDeps, str]):
     async def run(
         self, ctx: GraphRunContext[GraphState, AgentDeps]
     ) -> RunSQLNode | WriteSheetNode | UserInteractionNode | TaskResultNode | End[str]:
-        async with agent.run_mcp_servers():
-            res = await agent.run(
-                user_prompt=self.user_prompt, deps=ctx.deps, message_history=ctx.state.message_history
-            )
-            ctx.state.message_history += res.new_messages()
-            if isinstance(res.output, RunSQL):
-                return RunSQLNode(
-                    query=res.output.query, preview_rows=res.output.preview_rows, file_name=res.output.file_name
+        try:
+            async with agent.run_mcp_servers():
+                res = await agent.run(
+                    user_prompt=self.user_prompt, deps=ctx.deps, message_history=ctx.state.message_history
                 )
-            elif isinstance(res.output, WriteSheetFromFile):
-                return WriteSheetNode(
-                    file_path=res.output.file_path,
-                    sheet_name=res.output.sheet_name,
-                    workbook_name=res.output.workbook_name,
-                )
-            elif isinstance(res.output, UserInteraction):
-                return UserInteractionNode(message=res.output.message)
-            elif isinstance(res.output, TaskResult):
-                return TaskResultNode(message=res.output.message)
-            else:
-                return End(data=str(res.output))
+                ctx.state.message_history += res.new_messages()
+                if isinstance(res.output, RunSQL):
+                    if ctx.state.run_sql_attempts < MAX_RETRIES:
+                        return RunSQLNode(
+                            query=res.output.query,
+                            preview_rows=res.output.preview_rows,
+                            file_name=res.output.file_name,
+                        )
+                    return End(data="Ran into an error. Please try again.")
+                elif isinstance(res.output, WriteSheetFromFile):
+                    if ctx.state.write_sheet_attempts < MAX_RETRIES:
+                        return WriteSheetNode(
+                            file_path=res.output.file_path,
+                            sheet_name=res.output.sheet_name,
+                            workbook_name=res.output.workbook_name,
+                        )
+                    return End(data="Ran into an error. Please try again.")
+                elif isinstance(res.output, UserInteraction):
+                    return UserInteractionNode(message=res.output.message)
+                elif isinstance(res.output, TaskResult):
+                    return TaskResultNode(message=res.output.message)
+                else:
+                    return End(data=str(res.output))
+        except Exception as e:
+            logger.error(f"Error running agent: {e}")
+            return End(data="Ran into an error. Please try again.")
 
 
 graph = Graph(
     nodes=(RunAgentNode, RunSQLNode, WriteSheetNode, UserInteractionNode, TaskResultNode),
     name="CFO Graph",
 )
-graph.mermaid_save(Path("cfo_graph.jpg"), direction="LR", highlighted_nodes=RunAgentNode)
+try:
+    graph.mermaid_save(Path("cfo_graph.jpg"), direction="LR", highlighted_nodes=RunAgentNode)
+except Exception as e:
+    logger.error(f"Error saving graph: {e}")
 
 
-def setup_thread_dirs(thread_dir: Path | str) -> tuple[str, str, str]:
+def setup_thread_dirs(thread_dir: Path | str):
     thread_dir = Path(thread_dir).expanduser().resolve()
     thread_dir.mkdir(parents=True, exist_ok=True)
-    workspace_dir = thread_dir.parent.parent.expanduser().resolve()
+    workspace_dir = thread_dir.parent.parent
     data_dir = workspace_dir / "data"
     analysis_dir = thread_dir / "analysis"
     results_dir = thread_dir / "results"
+    states_dir = thread_dir / "states"
     data_dir.mkdir(parents=True, exist_ok=True)
     analysis_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
-    return str(data_dir), str(analysis_dir), str(results_dir)
+    states_dir.mkdir(parents=True, exist_ok=True)
+    return
 
 
 async def load_state(persistence: FileStatePersistence) -> GraphState:
     if snapshot := await persistence.load_next():
         return snapshot.state
     snapshots = await persistence.load_all()
-    return snapshots[-1].state if snapshots else GraphState()
+    return GraphState(message_history=snapshots[-1].state.message_history) if snapshots else GraphState()
 
 
 async def thread(thread_dir: Path | str, user_prompt: str) -> str:
-    data_dir, analysis_dir, results_dir = setup_thread_dirs(thread_dir)
-    persistence_path = Path(thread_dir) / "state.json"
+    thread_dir = Path(thread_dir).expanduser().resolve()
+    setup_thread_dirs(thread_dir)
+    data_dir = thread_dir.parent.parent / "data"
+    analysis_dir = thread_dir / "analysis"
+    results_dir = thread_dir / "results"
+    states_dir = thread_dir / "states"
+    prev_states = sorted(
+        states_dir.glob("*.json"), key=lambda p: datetime.strptime(p.stem, "%d-%m-%Y_%H-%M-%S"), reverse=True
+    )
+    if prev_states:
+        prev_persistence = FileStatePersistence(json_file=prev_states[0].expanduser().resolve())
+        prev_persistence.set_graph_types(graph=graph)
+        state = await load_state(persistence=prev_persistence)
+    else:
+        state = GraphState()
+    persistence_path = states_dir / f"{datetime.now().strftime('%d-%m-%Y_%H-%M-%S')}.json"
     persistence = FileStatePersistence(json_file=persistence_path.expanduser().resolve())
     persistence.set_graph_types(graph=graph)
-    state = await load_state(persistence=persistence)
-    deps = AgentDeps(data_dir=data_dir, analysis_dir=analysis_dir, results_dir=results_dir)
+
+    deps = AgentDeps(data_dir=str(data_dir), analysis_dir=str(analysis_dir), results_dir=str(results_dir))
     res = await graph.run(
         start_node=RunAgentNode(user_prompt=user_prompt), state=state, deps=deps, persistence=persistence
     )
@@ -505,5 +559,5 @@ async def run_app():
         input_prompt = await thread(thread_dir=thread_dir, user_prompt=user_prompt)
 
 
-# if __name__ == "__main__":
-# asyncio.run(run_app())
+if __name__ == "__main__":
+    asyncio.run(run_app())

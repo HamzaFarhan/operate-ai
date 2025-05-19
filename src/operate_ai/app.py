@@ -224,7 +224,6 @@ async def main():
                             sheet_tabs = st.tabs(sheet_names)
                             for tab, sheet_name in zip(sheet_tabs, sheet_names):
                                 with tab:
-                                    st.write(f"### {sheet_name}")  # type: ignore
                                     st.dataframe(excel_data[sheet_name])  # type: ignore
                         except Exception:
                             st.error("Could not read Excel file.")

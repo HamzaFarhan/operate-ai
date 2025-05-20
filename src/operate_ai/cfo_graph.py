@@ -141,6 +141,9 @@ class RunSQL(BaseModel):
     3. Returns a ResultHandle with a small in-memory preview.
     """
 
+    purpose: str = Field(
+        description="Describe what you want to achieve with the query and why. Relate it to the main task."
+    )
     query: str = Field(
         description=(
             "The SQL query to execute."
@@ -159,6 +162,7 @@ class RunSQLResult(BaseModel):
     A lightweight reference to a (possibly large) query result on disk.
     """
 
+    purpose: str | None = None
     sql_path: str
     csv_path: str
     row_count: int
@@ -242,6 +246,7 @@ class RunSQLNode(BaseNode[GraphState, AgentDeps, RunSQLResult]):
     """Run 'run_sql' tool."""
 
     docstring_notes = True
+    purpose: str
     query: str
     preview_rows: int = 2
     file_name: str | None = None
@@ -254,10 +259,11 @@ class RunSQLNode(BaseNode[GraphState, AgentDeps, RunSQLResult]):
                 preview_rows=self.preview_rows,
                 file_name=self.file_name,
             )
+            sql_result.purpose = self.purpose
             ctx.state.chat_messages.append(
                 {"role": "assistant", "content": sql_result, "state_path": ctx.deps.state_path}
             )
-            ctx.state.message_history.append(user_message(sql_result.model_dump_json()))
+            ctx.state.message_history.append(user_message(sql_result.model_dump_json(exclude={"purpose"})))
             return End(data=sql_result)
         except Exception as e:
             logger.error(f"Error running SQL query: {e}")
@@ -448,15 +454,16 @@ class TaskResultNode(BaseNode[GraphState, AgentDeps, str]):
 #     "openai:gpt-4.1", "anthropic:claude-3-5-sonnet-latest", "openai:gpt-4.1-mini", "google-gla:gemini-2.0-flash"
 # )
 
-fallback_model = FallbackModel(
+model = FallbackModel(
     "openai:gpt-4.1",
     "openai:gpt-4.1-mini",
     "google-gla:gemini-2.0-flash",
     "anthropic:claude-3-5-sonnet-latest",
 )
+model = "google-gla:gemini-2.0-flash"
 
 agent = Agent(
-    model="google-gla:gemini-2.0-flash",
+    model=model,
     instructions=[
         Path("/Users/hamza/dev/operate-ai/src/operate_ai/prompts/cfo.md").read_text(),
         add_current_time,
@@ -501,6 +508,7 @@ class RunAgentNode(BaseNode[GraphState, AgentDeps, RunSQLResult | WriteSheetResu
                 if isinstance(res.output, RunSQL):
                     if ctx.state.run_sql_attempts < MAX_RETRIES:
                         return RunSQLNode(
+                            purpose=res.output.purpose,
                             query=res.output.query,
                             preview_rows=res.output.preview_rows,
                             file_name=res.output.file_name,

@@ -216,22 +216,23 @@ async def main():
                     resp = parse_response(msg.content)
                     if isinstance(resp, RunSQLResult):
                         st.markdown("Ran an SQL query, please review")
-                        with st.expander("Show Progress"):
-                            tabs = st.tabs(["SQL Command", "CSV Preview"])
+                        with st.expander(resp.purpose or "Show Progress"):
+                            tabs = st.tabs(["CSV Preview", "SQL Command"])
                             with tabs[0]:
-                                sql_path = resp.sql_path
-                                try:
-                                    sql_text = Path(sql_path).read_text()
-                                except Exception:
-                                    sql_text = "(Could not read SQL file)"
-                                st.code(sql_text, language="sql")
-                            with tabs[1]:
                                 csv_path = resp.csv_path
                                 try:
                                     df = pd.read_csv(csv_path)  # type: ignore
                                     st.dataframe(df)  # type: ignore
                                 except Exception:
                                     st.error("Could not read CSV file.")
+                            with tabs[1]:
+                                sql_path = resp.sql_path
+                                try:
+                                    sql_text = Path(sql_path).read_text()
+                                except Exception:
+                                    sql_text = "(Could not read SQL file)"
+                                st.code(sql_text, language="sql")
+
                     elif isinstance(resp, WriteSheetResult):
                         st.markdown("Wrote the results to a Workbook, please review")
                         with st.expander("Show Results"):
@@ -243,6 +244,14 @@ async def main():
                                 for tab, sheet_name in zip(sheet_tabs, sheet_names):
                                     with tab:
                                         st.dataframe(excel_data[sheet_name])  # type: ignore
+                                file_bytes = Path(excel_path).read_bytes()
+                                st.download_button(
+                                    label="Download Excel file",
+                                    data=file_bytes,
+                                    file_name=Path(excel_path).name,
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key=f"download_excel_{thread_id}_{i}",
+                                )
                             except Exception:
                                 st.error("Could not read Excel file.")
                     else:

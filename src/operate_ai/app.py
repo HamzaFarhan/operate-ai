@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import time
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -17,6 +18,8 @@ from operate_ai.cfo_graph import RunSQLResult, WriteSheetResult
 # API configuration
 API_URL = "http://localhost:8000"
 TIMEOUT = 60
+COUNT_DOWN_SECONDS = 30
+CONTINUE_MESSAGE = "Looks good, please continue."
 
 st.set_page_config(layout="wide")
 
@@ -124,6 +127,12 @@ async def main():
         st.session_state.thread_id = None
     if "thread_name" not in st.session_state:
         st.session_state.thread_name = None
+    if "show_countdown" not in st.session_state:
+        st.session_state.show_countdown = False
+    if "cancel_countdown" not in st.session_state:
+        st.session_state.cancel_countdown = False
+    if "countdown" not in st.session_state:
+        st.session_state.countdown = COUNT_DOWN_SECONDS
 
     st.title("Operate AI")
 
@@ -215,6 +224,7 @@ async def main():
                 with st.chat_message("assistant"):
                     resp = parse_response(msg.content)
                     if isinstance(resp, RunSQLResult):
+                        st.session_state.show_countdown = True
                         st.markdown("Ran an SQL query, please review")
                         with st.expander(resp.purpose or "Show Progress"):
                             tabs = st.tabs(["CSV Preview", "SQL Command"])
@@ -234,6 +244,7 @@ async def main():
                                 st.code(sql_text, language="sql")
 
                     elif isinstance(resp, WriteSheetResult):
+                        st.session_state.show_countdown = True
                         st.markdown("Wrote the results to a Workbook, please review")
                         with st.expander("Show Results"):
                             excel_path = resp.file_path
@@ -255,6 +266,7 @@ async def main():
                             except Exception:
                                 st.error("Could not read Excel file.")
                     else:
+                        st.session_state.show_countdown = False
                         st.markdown(resp)
                     if st.button("New Thread From Here", key=f"new_thread_from_here_{thread_id}_{i}"):
                         logger.info(f"Creating new thread from here: {msg.state_path}")
@@ -270,13 +282,43 @@ async def main():
                         else:
                             st.error("Failed to create thread")
 
-        # Input for new message using chat_input
+        if st.session_state.show_countdown and not st.session_state.cancel_countdown:
+            if "countdown" not in st.session_state:
+                st.session_state.countdown = COUNT_DOWN_SECONDS
+            if st.session_state.countdown > 0:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.progress(st.session_state.countdown / COUNT_DOWN_SECONDS)
+                    st.text(f"Continuing in {st.session_state.countdown} seconds...")
+                with col2:
+                    if st.button("Cancel Auto-Continue"):
+                        st.session_state.show_countdown = False
+                        st.session_state.countdown = COUNT_DOWN_SECONDS
+                        st.session_state.cancel_countdown = True
+                        st.rerun()
+
+            # Decrease countdown
+            st.session_state.countdown -= 1
+
+            # If countdown reaches zero, send message
+            if st.session_state.countdown < 0:
+                st.session_state.show_countdown = False
+                st.session_state.countdown = COUNT_DOWN_SECONDS
+                response = await send_message(workspace_id, thread_id, CONTINUE_MESSAGE)
+                if response:
+                    st.rerun()
+            else:
+                # Use st.rerun to update the UI with new countdown value
+                time.sleep(1)  # Small delay to prevent too rapid refreshes
+                st.rerun()
+
         if user_message := st.chat_input("Your message..."):
             with st.chat_message("user"):
                 st.markdown(user_message)
             with st.spinner("Processing..."):
                 response = await send_message(workspace_id, thread_id, user_message)
                 if response:
+                    st.session_state.cancel_countdown = False
                     st.rerun()
     else:
         st.info("Please select or create a workspace and thread from the sidebar.")

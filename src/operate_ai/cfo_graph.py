@@ -460,7 +460,7 @@ model = FallbackModel(
     "google-gla:gemini-2.0-flash",
     "anthropic:claude-3-5-sonnet-latest",
 )
-model = "google-gla:gemini-2.0-flash"
+# model = "google-gla:gemini-2.0-flash"
 
 agent = Agent(
     model=model,
@@ -621,7 +621,7 @@ async def thread(
 async def run_app():
     input_prompt = ""
     while True:
-        # user_prompt = "How many customers in 2022 signed up for a monthly plan? and how many in 2023? compile in an excel sheet"
+        # user_prompt = "How many customers in 2022 signed up for a monthly plan?"
         thread_dir = Path("/Users/hamza/dev/operate-ai/workspaces/1/threads/1")
         user_prompt = input(f"{input_prompt} > ")
         if user_prompt.strip().lower() in ["q", ""]:

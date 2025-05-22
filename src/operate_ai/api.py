@@ -1,9 +1,11 @@
 import asyncio
+import os
 import shutil
 import uuid
 from pathlib import Path
 from typing import Literal
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -11,11 +13,13 @@ from pydantic import BaseModel, Field
 from operate_ai.cfo_graph import RunSQLResult, WriteSheetResult, get_prev_state_path, load_prev_state
 from operate_ai.cfo_graph import thread as run_thread
 
+load_dotenv()
+
 app = FastAPI(title="Operate AI API")
 
 
 # Base directory for workspaces
-WORKSPACES_DIR = Path("workspaces")
+WORKSPACES_DIR = Path(os.getenv("WORKSPACES_DIR", "workspaces"))
 WORKSPACES_DIR.mkdir(exist_ok=True)
 
 

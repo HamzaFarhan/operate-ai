@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import tempfile
 from collections.abc import Hashable
@@ -14,6 +15,7 @@ from uuid import uuid4
 import duckdb
 import logfire
 import pandas as pd
+from dotenv import load_dotenv
 from loguru import logger
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -23,11 +25,14 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from pydantic_graph.persistence.file import FileStatePersistence
 
+load_dotenv()
+
 logfire.configure()
 
 SQL_TIMEOUT_SECONDS = 5
 PREVIEW_ROWS = 10
 MAX_RETRIES = 10
+MEMORY_FILE_PATH = os.getenv("MEMORY_FILE_PATH", "memory.json")
 
 
 def user_message(content: str) -> ModelRequest:
@@ -69,9 +74,6 @@ class AgentDeps(BaseModel):
 class GraphResult(BaseModel):
     result_type: Literal["run_sql", "write_sheet", "user_interaction", "task_result", "error"]
     result: str
-
-
-thinking_server = MCPServerStdio(command="npx", args=["-y", "@modelcontextprotocol/server-sequential-thinking"])
 
 
 def extract_csv_paths(sql_query: str) -> list[str]:
@@ -454,6 +456,12 @@ class TaskResultNode(BaseNode[GraphState, AgentDeps, str]):
 #     "openai:gpt-4.1", "anthropic:claude-3-5-sonnet-latest", "openai:gpt-4.1-mini", "google-gla:gemini-2.0-flash"
 # )
 
+thinking_server = MCPServerStdio(command="npx", args=["-y", "@modelcontextprotocol/server-sequential-thinking"])
+memory_server = MCPServerStdio(
+    command="uv", args=["run", "./memory_mcp.py"], env={"MEMORY_FILE_PATH": MEMORY_FILE_PATH}
+)
+
+
 model = FallbackModel(
     "openai:gpt-4.1",
     "openai:gpt-4.1-mini",
@@ -465,14 +473,15 @@ model = FallbackModel(
 agent = Agent(
     model=model,
     instructions=[
-        Path("/Users/hamza/dev/operate-ai/src/operate_ai/prompts/cfo.md").read_text(),
+        Path("./prompts/cfo.md").read_text(),
+        Path("./prompts/memory.md").read_text(),
         add_current_time,
         add_dirs,
     ],
     deps_type=AgentDeps,
     retries=MAX_RETRIES,
     tools=[list_csv_files, calculate_sum, calculate_difference, calculate_mean],
-    mcp_servers=[thinking_server],
+    mcp_servers=[thinking_server, memory_server],
     output_type=TaskResult | UserInteraction | RunSQL | WriteSheetFromFile,  # type: ignore
     instrument=True,
 )
@@ -584,6 +593,7 @@ def get_prev_state_path(thread_dir: Path | str) -> Path | None:
 
 async def load_prev_state(thread_dir: Path | str, prev_state_path: Path | str | None = None) -> GraphState:
     prev_state_path = Path(prev_state_path) if prev_state_path else get_prev_state_path(thread_dir)
+    logger.info(f"Previous state path: {prev_state_path}")
     if prev_state_path:
         prev_persistence = FileStatePersistence(json_file=prev_state_path.expanduser().resolve())
         prev_persistence.set_graph_types(graph=graph)
@@ -627,3 +637,7 @@ async def run_app():
         if user_prompt.strip().lower() in ["q", ""]:
             return
         input_prompt = await thread(thread_dir=thread_dir, user_prompt=user_prompt)
+
+
+if __name__ == "__main__":
+    asyncio.run(run_app())

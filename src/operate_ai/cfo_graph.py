@@ -480,7 +480,7 @@ def create_agent(model: Model | KnownModelName, workspace_dir: Path | str) -> Ag
         retries=MAX_RETRIES,
         tools=[list_csv_files, calculate_sum, calculate_difference, calculate_mean],
         mcp_servers=[thinking_server, memory_server],
-        output_type=TaskResult | UserInteraction | RunSQL | WriteSheetFromFile,  # type: ignore
+        output_type=TaskResult | UserInteraction | RunSQL,  # type: ignore
         instrument=True,
     )
 
@@ -618,7 +618,7 @@ async def thread(
     model = FallbackModel(
         "openai:gpt-4.1",
         "openai:gpt-4.1-mini",
-        "gemini-2.5-flash-preview-05-20",
+        "gemini-2.5-flash-preview-05-20",  # type: ignore
         "google-gla:gemini-2.0-flash",
         "anthropic:claude-3-5-sonnet-latest",
     )

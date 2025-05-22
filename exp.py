@@ -10,3 +10,5 @@ load_dotenv()
 
 
 agent = Agent(model='google-gla:gemini-2.0-flash')
+
+print(Path("src/operate_ai/prompts/cfo.md").read_text())

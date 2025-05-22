@@ -29,6 +29,7 @@ dependencies = [
     "streamlit>=1.45.1",
     "websocket-client>=1.8.0",
     "fastmcp>=2.3.4",
+    "watchdog>=6.0.0",
 ]
 
 [tool.uv.sources]

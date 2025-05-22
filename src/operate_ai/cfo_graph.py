@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from pydantic_graph.persistence.file import FileStatePersistence
@@ -49,14 +50,6 @@ class ChatMessage(TypedDict):
     state_path: str
 
 
-@dataclass
-class GraphState:
-    chat_messages: list[ChatMessage] = field(default_factory=list)
-    message_history: list[ModelMessage] = field(default_factory=list)
-    run_sql_attempts: int = 0
-    write_sheet_attempts: int = 0
-
-
 class AgentDeps(BaseModel):
     data_dir: str
     analysis_dir: str
@@ -69,6 +62,20 @@ class AgentDeps(BaseModel):
         Path(self.analysis_dir).mkdir(parents=True, exist_ok=True)
         Path(self.results_dir).mkdir(parents=True, exist_ok=True)
         return self
+
+
+@dataclass
+class GraphState:
+    chat_messages: list[ChatMessage] = field(default_factory=list)
+    message_history: list[ModelMessage] = field(default_factory=list)
+    run_sql_attempts: int = 0
+    write_sheet_attempts: int = 0
+
+
+@dataclass
+class GraphDeps:
+    agent: Agent[AgentDeps, str]
+    agent_deps: AgentDeps
 
 
 class GraphResult(BaseModel):
@@ -244,7 +251,7 @@ async def run_sql(
 
 
 @dataclass
-class RunSQLNode(BaseNode[GraphState, AgentDeps, RunSQLResult]):
+class RunSQLNode(BaseNode[GraphState, GraphDeps, RunSQLResult]):
     """Run 'run_sql' tool."""
 
     docstring_notes = True
@@ -253,17 +260,17 @@ class RunSQLNode(BaseNode[GraphState, AgentDeps, RunSQLResult]):
     preview_rows: int = 2
     file_name: str | None = None
 
-    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> RunAgentNode | End[RunSQLResult]:
+    async def run(self, ctx: GraphRunContext[GraphState, GraphDeps]) -> RunAgentNode | End[RunSQLResult]:
         try:
             sql_result = await run_sql(
-                analysis_dir=ctx.deps.analysis_dir,
+                analysis_dir=ctx.deps.agent_deps.analysis_dir,
                 query=self.query,
                 preview_rows=self.preview_rows,
                 file_name=self.file_name,
             )
             sql_result.purpose = self.purpose
             ctx.state.chat_messages.append(
-                {"role": "assistant", "content": sql_result, "state_path": ctx.deps.state_path}
+                {"role": "assistant", "content": sql_result, "state_path": ctx.deps.agent_deps.state_path}
             )
             ctx.state.message_history.append(user_message(sql_result.model_dump_json(exclude={"purpose"})))
             return End(data=sql_result)
@@ -362,7 +369,7 @@ def write_sheet_from_file(
 
 
 @dataclass
-class WriteSheetNode(BaseNode[GraphState, AgentDeps, WriteSheetResult]):
+class WriteSheetNode(BaseNode[GraphState, GraphDeps, WriteSheetResult]):
     """Run 'write_sheet_from_file' tool."""
 
     docstring_notes = True
@@ -370,16 +377,16 @@ class WriteSheetNode(BaseNode[GraphState, AgentDeps, WriteSheetResult]):
     sheet_name: str
     workbook_name: str | None = None
 
-    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> RunAgentNode | End[WriteSheetResult]:
+    async def run(self, ctx: GraphRunContext[GraphState, GraphDeps]) -> RunAgentNode | End[WriteSheetResult]:
         try:
             write_sheet_result = write_sheet_from_file(
-                results_dir=ctx.deps.results_dir,
+                results_dir=ctx.deps.agent_deps.results_dir,
                 file_path=self.file_path,
                 sheet_name=self.sheet_name,
                 workbook_name=self.workbook_name,
             )
             ctx.state.chat_messages.append(
-                {"role": "assistant", "content": write_sheet_result, "state_path": ctx.deps.state_path}
+                {"role": "assistant", "content": write_sheet_result, "state_path": ctx.deps.agent_deps.state_path}
             )
             ctx.state.message_history.append(user_message(write_sheet_result.model_dump_json()))
             return End(data=write_sheet_result)
@@ -417,15 +424,15 @@ def user_interaction(message: str) -> str:
 
 
 @dataclass
-class UserInteractionNode(BaseNode[GraphState, AgentDeps, str]):
+class UserInteractionNode(BaseNode[GraphState, GraphDeps, str]):
     """Pass to End."""
 
     docstring_notes = True
     message: str
 
-    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> End[str]:  # noqa: ARG002
+    async def run(self, ctx: GraphRunContext[GraphState, GraphDeps]) -> End[str]:  # noqa: ARG002
         ctx.state.chat_messages.append(
-            {"role": "assistant", "content": self.message, "state_path": ctx.deps.state_path}
+            {"role": "assistant", "content": self.message, "state_path": ctx.deps.agent_deps.state_path}
         )
         return End(data=self.message)
 
@@ -439,63 +446,54 @@ class TaskResult(BaseModel):
 
 
 @dataclass
-class TaskResultNode(BaseNode[GraphState, AgentDeps, str]):
+class TaskResultNode(BaseNode[GraphState, GraphDeps, str]):
     """Pass to End."""
 
     docstring_notes = True
     message: str
 
-    async def run(self, ctx: GraphRunContext[GraphState, AgentDeps]) -> End[str]:  # noqa: ARG002
+    async def run(self, ctx: GraphRunContext[GraphState, GraphDeps]) -> End[str]:  # noqa: ARG002
         ctx.state.chat_messages.append(
-            {"role": "assistant", "content": self.message, "state_path": ctx.deps.state_path}
+            {"role": "assistant", "content": self.message, "state_path": ctx.deps.agent_deps.state_path}
         )
         return End(data=self.message)
 
 
-# fallback_model = FallbackModel(
-#     "openai:gpt-4.1", "anthropic:claude-3-5-sonnet-latest", "openai:gpt-4.1-mini", "google-gla:gemini-2.0-flash"
-# )
-
-thinking_server = MCPServerStdio(command="npx", args=["-y", "@modelcontextprotocol/server-sequential-thinking"])
-memory_server = MCPServerStdio(
-    command="uv", args=["run", "./memory_mcp.py"], env={"MEMORY_FILE_PATH": MEMORY_FILE_PATH}
-)
-
-
-model = FallbackModel(
-    "openai:gpt-4.1",
-    "openai:gpt-4.1-mini",
-    "google-gla:gemini-2.0-flash",
-    "anthropic:claude-3-5-sonnet-latest",
-)
-# model = "google-gla:gemini-2.0-flash"
-
-agent = Agent(
-    model=model,
-    instructions=[
-        Path("./prompts/cfo.md").read_text(),
-        Path("./prompts/memory.md").read_text(),
-        add_current_time,
-        add_dirs,
-    ],
-    deps_type=AgentDeps,
-    retries=MAX_RETRIES,
-    tools=[list_csv_files, calculate_sum, calculate_difference, calculate_mean],
-    mcp_servers=[thinking_server, memory_server],
-    output_type=TaskResult | UserInteraction | RunSQL | WriteSheetFromFile,  # type: ignore
-    instrument=True,
-)
+def create_agent(model: Model | KnownModelName, workspace_dir: Path | str) -> Agent[AgentDeps, str]:
+    thinking_server = MCPServerStdio(
+        command="npx", args=["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    )
+    memory_server = MCPServerStdio(
+        command="uv",
+        args=["run", "./memory_mcp.py"],
+        env={"MEMORY_FILE_PATH": str(Path(workspace_dir) / Path(MEMORY_FILE_PATH))},
+    )
+    return Agent(
+        model=model,
+        instructions=[
+            Path("./prompts/cfo.md").read_text(),
+            Path("./prompts/memory.md").read_text(),
+            add_current_time,
+            add_dirs,
+        ],
+        deps_type=AgentDeps,
+        retries=MAX_RETRIES,
+        tools=[list_csv_files, calculate_sum, calculate_difference, calculate_mean],
+        mcp_servers=[thinking_server, memory_server],
+        output_type=TaskResult | UserInteraction | RunSQL | WriteSheetFromFile,  # type: ignore
+        instrument=True,
+    )
 
 
 @dataclass
-class RunAgentNode(BaseNode[GraphState, AgentDeps, RunSQLResult | WriteSheetResult | str]):
+class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteSheetResult | str]):
     """Run the agent."""
 
     docstring_notes = True
     user_prompt: str
 
     async def run(
-        self, ctx: GraphRunContext[GraphState, AgentDeps]
+        self, ctx: GraphRunContext[GraphState, GraphDeps]
     ) -> (
         RunSQLNode
         | WriteSheetNode
@@ -505,13 +503,15 @@ class RunAgentNode(BaseNode[GraphState, AgentDeps, RunSQLResult | WriteSheetResu
     ):
         if self.user_prompt:
             ctx.state.chat_messages.append(
-                {"role": "user", "content": self.user_prompt, "state_path": ctx.deps.state_path}
+                {"role": "user", "content": self.user_prompt, "state_path": ctx.deps.agent_deps.state_path}
             )
         error_result = End(data="Ran into an error. Please try again.")
         try:
-            async with agent.run_mcp_servers():
-                res = await agent.run(
-                    user_prompt=self.user_prompt, deps=ctx.deps, message_history=ctx.state.message_history
+            async with ctx.deps.agent.run_mcp_servers():
+                res = await ctx.deps.agent.run(
+                    user_prompt=self.user_prompt,
+                    deps=ctx.deps.agent_deps,
+                    message_history=ctx.state.message_history,
                 )
                 ctx.state.message_history += res.new_messages()
                 if isinstance(res.output, RunSQL):
@@ -615,15 +615,25 @@ async def thread(
     persistence_path = states_dir / f"{datetime.now().strftime('%d-%m-%Y_%H-%M-%S')}.json"
     persistence = FileStatePersistence(json_file=persistence_path.expanduser().resolve())
     persistence.set_graph_types(graph=graph)
-
-    deps = AgentDeps(
+    model = FallbackModel(
+        "openai:gpt-4.1",
+        "openai:gpt-4.1-mini",
+        "gemini-2.5-flash-preview-05-20",
+        "google-gla:gemini-2.0-flash",
+        "anthropic:claude-3-5-sonnet-latest",
+    )
+    agent_deps = AgentDeps(
         data_dir=str(data_dir),
         analysis_dir=str(analysis_dir),
         results_dir=str(results_dir),
         state_path=str(persistence_path),
     )
+    agent = create_agent(model=model, workspace_dir=thread_dir.parent.parent)
     res = await graph.run(
-        start_node=RunAgentNode(user_prompt=user_prompt), state=state, deps=deps, persistence=persistence
+        start_node=RunAgentNode(user_prompt=user_prompt),
+        state=state,
+        deps=GraphDeps(agent=agent, agent_deps=agent_deps),
+        persistence=persistence,
     )
     return res.output
 

@@ -1,0 +1,5 @@
+Which industry is the most profitable in 2024?
+
+Also consider data for 2023. Would be nice to see the trend.
+
+No need for a workbook. Just give me a quick analysis in markdown.

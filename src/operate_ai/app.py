@@ -17,8 +17,8 @@ from operate_ai.cfo_graph import RunSQLResult, WriteSheetResult
 
 # API configuration
 API_URL = "http://localhost:8000"
-TIMEOUT = 60
-COUNT_DOWN_SECONDS = 30
+TIMEOUT = 300
+COUNT_DOWN_SECONDS = 20
 CONTINUE_MESSAGE = "Looks good, please continue."
 
 st.set_page_config(layout="wide")
@@ -131,10 +131,12 @@ async def main():
         st.session_state.show_countdown = False
     if "cancel_countdown" not in st.session_state:
         st.session_state.cancel_countdown = False
+    if "force_continue" not in st.session_state:
+        st.session_state.force_continue = False
     if "countdown" not in st.session_state:
         st.session_state.countdown = COUNT_DOWN_SECONDS
 
-    st.title("Operate AI")
+    st.title("AI CFO")
 
     # --- Sidebar for workspace/thread/data ---
     with st.sidebar:
@@ -285,25 +287,32 @@ async def main():
         if st.session_state.show_countdown and not st.session_state.cancel_countdown:
             if "countdown" not in st.session_state:
                 st.session_state.countdown = COUNT_DOWN_SECONDS
-            if st.session_state.countdown > 0:
-                col1, col2 = st.columns([3, 1])
+            if st.session_state.countdown > 0 and not st.session_state.force_continue:
+                col1, col2, col3 = st.columns([0.8, 0.07, 0.13])
                 with col1:
-                    st.progress(st.session_state.countdown / COUNT_DOWN_SECONDS)
+                    st.progress(min(st.session_state.countdown / COUNT_DOWN_SECONDS, 1.0))
                     st.text(f"Continuing in {st.session_state.countdown} seconds...")
                 with col2:
-                    if st.button("Cancel Auto-Continue"):
+                    if st.button("Cancel"):
                         st.session_state.show_countdown = False
                         st.session_state.countdown = COUNT_DOWN_SECONDS
                         st.session_state.cancel_countdown = True
+                        st.rerun()
+                with col3:
+                    if st.button("Continue"):
+                        st.session_state.show_countdown = False
+                        st.session_state.countdown = COUNT_DOWN_SECONDS
+                        st.session_state.force_continue = True
                         st.rerun()
 
             # Decrease countdown
             st.session_state.countdown -= 1
 
             # If countdown reaches zero, send message
-            if st.session_state.countdown < 0:
+            if st.session_state.countdown < 0 or st.session_state.force_continue:
                 st.session_state.show_countdown = False
                 st.session_state.countdown = COUNT_DOWN_SECONDS
+                st.session_state.force_continue = False
                 response = await send_message(workspace_id, thread_id, CONTINUE_MESSAGE)
                 if response:
                     st.rerun()

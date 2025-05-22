@@ -1,0 +1,11 @@
+# Run fastapi app
+
+cd src/operate_ai
+
+uv run fastapi dev app.py
+
+# Run streamlit app
+
+cd src/operate_ai
+
+uv run streamlit run app.py

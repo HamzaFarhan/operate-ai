@@ -2,7 +2,7 @@
 
 cd src/operate_ai
 
-uv run fastapi dev app.py
+uv run fastapi dev api.py
 
 # Run streamlit app
 

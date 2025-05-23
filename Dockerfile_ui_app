@@ -1,0 +1,27 @@
+# Use Python base image
+FROM python:3.12
+
+# Set the working directory
+WORKDIR /app
+
+# Copy toml and Readme file
+COPY operate-ai/pyproject.toml /app
+COPY operate-ai/README.md /app
+
+# Install pip and hatch globally
+RUN pip install --no-cache-dir hatch
+
+# Create the virtual environment with hatch and install the project
+# RUN hatch env create 
+# RUN hatch run pip install .
+
+# Copy project files
+COPY operate-ai /app/
+
+# Expose ports as needed
+EXPOSE 5555
+
+WORKDIR /app/src/operate_ai
+
+# Command to run your application
+CMD ["sh", "-c", "uv run streamlit run app.py --server.port ${UI_PORT}"]

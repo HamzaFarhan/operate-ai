@@ -8,4 +8,37 @@ uv run fastapi dev app.py
 
 cd src/operate_ai
 
-uv run streamlit run app.py
+uv run streamlit run app.py 
+
+
+
+*************************** Update Deployments ***************************
+# Login to VM:
+gcloud compute ssh --zone "us-central1-c" "apps-demo" --project "dreamai-pocs"
+
+# Become root:
+sudo su -
+
+# Update Code:
+cd /opt/apps-demo/operateai-app/operate-ai
+ ... Make changes 
+
+# Build Docker Image (UI)
+cd /opt/apps-demo/operateai-app/
+docker build . -f operate-ai/Dockerfile_ui_app -t gcr.io/dreamai-pocs/operateai-ui-app:v1
+
+# Build Docker Image (Backend)
+cd /opt/apps-demo/operateai-app
+docker build . -f operate-ai/Dockerfile_bkend_app -t gcr.io/dreamai-pocs/operateai-bkend-app:v1
+
+# Restart Containers:
+cd /opt/apps-demo/operateai-app
+docker-compose down
+docker-compose up -d
+
+# Check logs:
+docker logs -f operateai-ui-app
+docker logs -f operateai-bkend-app
+
+# URL for the app:
+https://operateai.dreamai.io

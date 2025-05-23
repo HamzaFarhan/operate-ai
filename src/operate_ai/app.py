@@ -23,6 +23,9 @@ load_dotenv()
 API_HOST = os.getenv("API_HOST", "localhost")
 API_PORT = os.getenv("API_PORT", "8000")
 API_URL = f"http://{API_HOST}:{API_PORT}"
+WORKSPACES_DIR = Path(os.getenv("WORKSPACES_DIR", "workspaces"))
+WORKSPACES_DIR.mkdir(exist_ok=True)
+logger.info(f"Created workspaces directory at {WORKSPACES_DIR}")
 TIMEOUT = 600
 COUNT_DOWN_SECONDS = 20
 CONTINUE_MESSAGE = "Looks good, please continue."
@@ -92,7 +95,7 @@ async def send_message(
 
 async def upload_csv_to_workspace(workspace_id: str, file: io.BytesIO):
     # Get the workspace directory
-    workspace_dir = Path("workspaces") / workspace_id / "data"
+    workspace_dir = (WORKSPACES_DIR / workspace_id) / "data"
     workspace_dir.mkdir(exist_ok=True, parents=True)
     logger.info(f"Created workspace directory at {workspace_dir}")
 
@@ -183,7 +186,7 @@ async def main():
                         st.success("Files uploaded!")
 
             # Check if workspace has data files
-            workspace_data_dir = Path("workspaces") / selected_workspace_id / "data"
+            workspace_data_dir = (WORKSPACES_DIR / selected_workspace_id) / "data"
             has_data = any(workspace_data_dir.glob("*.csv"))
 
             st.header("Threads")

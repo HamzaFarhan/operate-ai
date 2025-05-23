@@ -15,7 +15,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from operate_ai.api import ChatMessage, ThreadInfo, WorkspaceInfo
-from operate_ai.cfo_graph import RunSQLResult, WriteToWorkbookResult
+from operate_ai.cfo_graph import RunSQLResult, WriteDataToExcelResult
 
 load_dotenv()
 
@@ -23,7 +23,7 @@ load_dotenv()
 API_HOST = os.getenv("API_HOST", "localhost")
 API_PORT = os.getenv("API_PORT", "8000")
 API_URL = f"http://{API_HOST}:{API_PORT}"
-TIMEOUT = 300
+TIMEOUT = 600
 COUNT_DOWN_SECONDS = 20
 CONTINUE_MESSAGE = "Looks good, please continue."
 
@@ -100,13 +100,13 @@ async def upload_csv_to_workspace(workspace_id: str, file: io.BytesIO):
     file_path.write_bytes(file.getbuffer())
 
 
-def parse_response(resp: Any) -> RunSQLResult | WriteToWorkbookResult | str:
+def parse_response(resp: Any) -> RunSQLResult | WriteDataToExcelResult | str:
     # If already correct type, return as is
-    if isinstance(resp, (RunSQLResult, WriteToWorkbookResult)):
+    if isinstance(resp, (RunSQLResult, WriteDataToExcelResult)):
         return resp
     # If dict, try to parse
     if isinstance(resp, dict):
-        for cls in (RunSQLResult, WriteToWorkbookResult):
+        for cls in (RunSQLResult, WriteDataToExcelResult):
             try:
                 return cls.model_validate(resp)
             except ValidationError:
@@ -115,7 +115,7 @@ def parse_response(resp: Any) -> RunSQLResult | WriteToWorkbookResult | str:
     if isinstance(resp, str):
         try:
             data = json.loads(resp)
-            for cls in (RunSQLResult, WriteToWorkbookResult):
+            for cls in (RunSQLResult, WriteDataToExcelResult):
                 try:
                     return cls.model_validate(data)
                 except ValidationError:
@@ -251,7 +251,7 @@ async def main():
                                     sql_text = "(Could not read SQL file)"
                                 st.code(sql_text, language="sql")
 
-                    elif isinstance(resp, WriteToWorkbookResult):
+                    elif isinstance(resp, WriteDataToExcelResult):
                         st.session_state.show_countdown = True
                         st.markdown("Wrote the results to a Workbook, please review")
                         with st.expander("Show Results"):

@@ -46,7 +46,7 @@ class Success(BaseModel):
 
 class ChatMessage(TypedDict):
     role: Literal["user", "assistant"]
-    content: RunSQLResult | WriteToWorkbookResult | str
+    content: RunSQLResult | WriteDataToExcelResult | str
     state_path: str
 
 
@@ -152,7 +152,10 @@ class RunSQL(BaseModel):
     """
 
     purpose: str = Field(
-        description="Describe what you want to achieve with the query and why. Relate it to the main task."
+        description=(
+            "Describe what you want to achieve with the query and why. Relate it to the main task.\n"
+            "This will be a user-facing message, so no need to be too technical or mention the internal errors faced if any."
+        )
     )
     query: str = Field(
         description=(
@@ -311,13 +314,13 @@ class WriteSheetFromFile(BaseModel):
     workbook_name: str | None = Field(description="Name of the workbook to append to / create in `results_dir`.")
 
 
-class WriteToWorkbookResult(BaseModel):
+class WriteDataToExcelResult(BaseModel):
     file_path: str
 
 
 def write_sheet_from_file(
     results_dir: str, file_path: str, sheet_name: str, workbook_name: str | None = None
-) -> WriteToWorkbookResult:
+) -> WriteDataToExcelResult:
     """
     Creates an excel workbook and writes a sheet to it.
     1. Reads from the `file_path` of the previously received RunSQLResult
@@ -366,11 +369,11 @@ def write_sheet_from_file(
                 f"{str(e)}"
             )
         )
-    return WriteToWorkbookResult(file_path=str(wb_path))
+    return WriteDataToExcelResult(file_path=str(wb_path))
 
 
 @dataclass
-class WriteSheetNode(BaseNode[GraphState, GraphDeps, WriteToWorkbookResult]):
+class WriteSheetNode(BaseNode[GraphState, GraphDeps, WriteDataToExcelResult]):
     """Run 'write_sheet_from_file' tool."""
 
     docstring_notes = True
@@ -378,7 +381,7 @@ class WriteSheetNode(BaseNode[GraphState, GraphDeps, WriteToWorkbookResult]):
     sheet_name: str
     workbook_name: str | None = None
 
-    async def run(self, ctx: GraphRunContext[GraphState, GraphDeps]) -> RunAgentNode | End[WriteToWorkbookResult]:
+    async def run(self, ctx: GraphRunContext[GraphState, GraphDeps]) -> RunAgentNode | End[WriteDataToExcelResult]:
         try:
             write_sheet_result = write_sheet_from_file(
                 results_dir=ctx.deps.agent_deps.results_dir,
@@ -482,13 +485,13 @@ def create_agent(model: Model | KnownModelName, workspace_dir: Path | str) -> Ag
         retries=MAX_RETRIES,
         tools=[list_csv_files, calculate_sum, calculate_difference, calculate_mean],
         mcp_servers=[thinking_server, memory_server, excel_server],
-        output_type=TaskResult | WriteToWorkbookResult | UserInteraction | RunSQL,  # type: ignore
+        output_type=TaskResult | WriteDataToExcelResult | UserInteraction | RunSQL,  # type: ignore
         instrument=True,
     )
 
 
 @dataclass
-class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteToWorkbookResult | str]):
+class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExcelResult | str]):
     """Run the agent."""
 
     docstring_notes = True
@@ -501,7 +504,7 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteToWorkboo
         | WriteSheetNode
         | UserInteractionNode
         | TaskResultNode
-        | End[RunSQLResult | WriteToWorkbookResult | str]
+        | End[RunSQLResult | WriteDataToExcelResult | str]
     ):
         if self.user_prompt:
             ctx.state.chat_messages.append(
@@ -535,6 +538,8 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteToWorkboo
                     return error_result
                 elif isinstance(res.output, UserInteraction):
                     return UserInteractionNode(message=res.output.message)
+                elif isinstance(res.output, WriteDataToExcelResult):
+                    return End(data=res.output)
                 elif isinstance(res.output, TaskResult):
                     return TaskResultNode(message=res.output.message)
                 else:
@@ -570,7 +575,7 @@ def setup_thread_dirs(thread_dir: Path | str):
 
 
 async def load_state(
-    persistence: FileStatePersistence[GraphState, RunSQLResult | WriteToWorkbookResult | str],
+    persistence: FileStatePersistence[GraphState, RunSQLResult | WriteDataToExcelResult | str],
 ) -> GraphState:
     if snapshot := await persistence.load_next():
         return snapshot.state
@@ -605,7 +610,7 @@ async def load_prev_state(thread_dir: Path | str, prev_state_path: Path | str | 
 
 async def thread(
     thread_dir: Path | str, user_prompt: str, prev_state_path: Path | str | None = None
-) -> RunSQLResult | WriteToWorkbookResult | str:
+) -> RunSQLResult | WriteDataToExcelResult | str:
     thread_dir = Path(thread_dir).expanduser().resolve()
     setup_thread_dirs(thread_dir)
     data_dir = thread_dir.parent.parent / "data"

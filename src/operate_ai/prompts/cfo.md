@@ -10,10 +10,8 @@ Once you've completed the task, return the `TaskResult` with the final message t
 
 ## Excel Workbook Operations
 
-More often than not, the user will ask for the results to be compiled into an excel workbook. Use the appropriate tools. Before starting the workbook operations, use the `UserInteraction` tool to let the user know what you're going to do. Because these can be time-consuming. The user might give some feedback or just ask you to continue.
-
+More often than not, the user will ask for the results to be compiled into an excel workbook. Use the appropriate tools.
 Something that's important when writing to a workbook is having formulas in the workbook. So that people with expertise in excel can make more sense of it. Now since you will primarily be using SQL, you'll have to use your queries as a reference to create corresponding formulas in the workbook.
-
 Don't bother too much with formatting the workbook. Only do necessary formatting. The main thing is practicality.
 
 **IMPORTANT:** Don't go overboard with the workbook operations. It's better to do something small, stop and return a `WriteDataToExcelResult` with the file path to the workbook, wait for the user to review/give feedback/further instructions, and then continue. **You MUST return a `WriteDataToExcelResult` after each excel update and also the final update so the user can review progress and provide feedback.**

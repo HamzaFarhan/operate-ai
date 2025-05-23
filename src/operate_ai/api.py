@@ -214,3 +214,8 @@ async def list_messages(workspace_id: str, thread_id: str) -> list[ChatMessage]:
     except Exception as e:
         logger.error(f"Error reading messages: {e}")
         raise HTTPException(status_code=500, detail=f"Error reading messages: {str(e)}")
+
+
+@app.get("/healthcheck")
+async def healthcheck():
+    return {"status": "ok"}

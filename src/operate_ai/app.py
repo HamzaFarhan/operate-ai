@@ -20,9 +20,9 @@ from operate_ai.cfo_graph import RunSQLResult, WriteToWorkbookResult
 load_dotenv()
 
 # API configuration
-API_HOST = os.getenv("API_HOST", "http://localhost")
+API_HOST = os.getenv("API_HOST", "localhost")
 API_PORT = os.getenv("API_PORT", "8000")
-API_URL = f"{API_HOST}:{API_PORT}"
+API_URL = f"http://{API_HOST}:{API_PORT}"
 TIMEOUT = 300
 COUNT_DOWN_SECONDS = 20
 CONTINUE_MESSAGE = "Looks good, please continue."

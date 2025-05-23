@@ -469,7 +469,7 @@ def create_agent(model: Model | KnownModelName, workspace_dir: Path | str) -> Ag
         args=["run", "./memory_mcp.py"],
         env={"MEMORY_FILE_PATH": str(Path(workspace_dir) / Path(MEMORY_FILE_PATH))},
     )
-    excel_server = MCPServerStdio(command="uvx", args=["/Users/hamza/dev/excel-mcp-server", "stdio"])
+    excel_server = MCPServerStdio(command="uvx", args=["../../../excel-mcp-server", "stdio"])
     return Agent(
         model=model,
         instructions=[

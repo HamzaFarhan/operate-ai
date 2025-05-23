@@ -501,7 +501,7 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
         self, ctx: GraphRunContext[GraphState, GraphDeps]
     ) -> (
         RunSQLNode
-        | WriteSheetNode
+        # | WriteSheetNode
         | UserInteractionNode
         | TaskResultNode
         | End[RunSQLResult | WriteDataToExcelResult | str]
@@ -528,14 +528,14 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
                             file_name=res.output.file_name,
                         )
                     return error_result
-                elif isinstance(res.output, WriteSheetFromFile):
-                    if ctx.state.write_sheet_attempts < MAX_RETRIES:
-                        return WriteSheetNode(
-                            file_path=res.output.file_path,
-                            sheet_name=res.output.sheet_name,
-                            workbook_name=res.output.workbook_name,
-                        )
-                    return error_result
+                # elif isinstance(res.output, WriteSheetFromFile):
+                #     if ctx.state.write_sheet_attempts < MAX_RETRIES:
+                #         return WriteSheetNode(
+                #             file_path=res.output.file_path,
+                #             sheet_name=res.output.sheet_name,
+                #             workbook_name=res.output.workbook_name,
+                #         )
+                #     return error_result
                 elif isinstance(res.output, UserInteraction):
                     return UserInteractionNode(message=res.output.message)
                 elif isinstance(res.output, WriteDataToExcelResult):
@@ -549,10 +549,7 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
             return error_result
 
 
-graph = Graph(
-    nodes=(RunAgentNode, RunSQLNode, WriteSheetNode, UserInteractionNode, TaskResultNode),
-    name="CFO Graph",
-)
+graph = Graph(nodes=(RunAgentNode, RunSQLNode, UserInteractionNode, TaskResultNode), name="CFO Graph")
 # try:
 #     graph.mermaid_save(Path("cfo_graph.jpg"), direction="LR", highlighted_nodes=RunAgentNode)
 # except Exception as e:

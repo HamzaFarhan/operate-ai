@@ -21,6 +21,7 @@ app = FastAPI(title="Operate AI API")
 # Base directory for workspaces
 WORKSPACES_DIR = Path(os.getenv("WORKSPACES_DIR", "workspaces"))
 WORKSPACES_DIR.mkdir(exist_ok=True)
+logger.info(f"Created workspaces directory at {WORKSPACES_DIR}")
 
 
 # Models
@@ -69,6 +70,7 @@ async def create_workspace(workspace: WorkspaceCreate):
 
     # Create workspace directory structure
     workspace_dir.mkdir(parents=True)
+    logger.info(f"Created workspace directory at {workspace_dir}")
     (workspace_dir / "data").mkdir()
     (workspace_dir / "threads").mkdir()
 

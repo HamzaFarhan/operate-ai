@@ -94,6 +94,7 @@ async def upload_csv_to_workspace(workspace_id: str, file: io.BytesIO):
     # Get the workspace directory
     workspace_dir = Path("workspaces") / workspace_id / "data"
     workspace_dir.mkdir(exist_ok=True, parents=True)
+    logger.info(f"Created workspace directory at {workspace_dir}")
 
     # Save the uploaded file to the workspace data directory
     file_path = workspace_dir / file.name
@@ -252,30 +253,33 @@ async def main():
                                 st.code(sql_text, language="sql")
 
                     elif isinstance(resp, WriteDataToExcelResult):
+                        excel_path = resp.file_path
+                        try:
+                            excel_data: dict[str, pd.DataFrame] = pd.read_excel(  # type: ignore
+                                excel_path, sheet_name=None
+                            )
+                            file_bytes = Path(excel_path).read_bytes()
+                        except Exception as e:
+                            logger.error(f"Error reading Excel file: {e}")
+                            continue
                         st.session_state.show_countdown = True
                         st.markdown("Wrote the results to a Workbook, please review")
                         with st.expander("Show Results"):
-                            excel_path = resp.file_path
-                            try:
-                                excel_data: dict[str, pd.DataFrame] = pd.read_excel(excel_path, sheet_name=None)  # type: ignore
-                                sheet_names = list(excel_data.keys())
-                                sheet_tabs = st.tabs(sheet_names)
-                                for tab, sheet_name in zip(sheet_tabs, sheet_names):
-                                    with tab:
-                                        try:
-                                            st.dataframe(excel_data[sheet_name])  # type: ignore
-                                        except Exception:
-                                            st.error(f"Could not read sheet: {sheet_name}")
-                                file_bytes = Path(excel_path).read_bytes()
-                                st.download_button(
-                                    label="Download Excel file",
-                                    data=file_bytes,
-                                    file_name=Path(excel_path).name,
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    key=f"download_excel_{thread_id}_{i}",
-                                )
-                            except Exception:
-                                st.error("Could not read Excel file.")
+                            sheet_names = list(excel_data.keys())
+                            sheet_tabs = st.tabs(sheet_names)
+                            for tab, sheet_name in zip(sheet_tabs, sheet_names):
+                                with tab:
+                                    try:
+                                        st.dataframe(excel_data[sheet_name])  # type: ignore
+                                    except Exception:
+                                        st.error(f"Could not read sheet: {sheet_name}")
+                            st.download_button(
+                                label="Download Excel file",
+                                data=file_bytes,
+                                file_name=Path(excel_path).name,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"download_excel_{thread_id}_{i}",
+                            )
                     else:
                         st.session_state.show_countdown = False
                         st.markdown(resp)

@@ -346,6 +346,7 @@ def write_sheet_from_file(
     )
     wb_path = workbook_path.expanduser().resolve().with_suffix(".xlsx")
     wb_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Writing to workbook: {wb_path}")
 
     df: pd.DataFrame = pd.read_csv(Path(file_path).expanduser().resolve())  # type: ignore
 
@@ -539,6 +540,9 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
                 elif isinstance(res.output, UserInteraction):
                     return UserInteractionNode(message=res.output.message)
                 elif isinstance(res.output, WriteDataToExcelResult):
+                    ctx.state.chat_messages.append(
+                        {"role": "assistant", "content": res.output, "state_path": ctx.deps.agent_deps.state_path}
+                    )
                     return End(data=res.output)
                 elif isinstance(res.output, TaskResult):
                     return TaskResultNode(message=res.output.message)

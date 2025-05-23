@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from operate_ai.cfo_graph import RunSQLResult, WriteSheetResult, get_prev_state_path, load_prev_state
+from operate_ai.cfo_graph import RunSQLResult, WriteToWorkbookResult, get_prev_state_path, load_prev_state
 from operate_ai.cfo_graph import thread as run_thread
 
 load_dotenv()
@@ -54,7 +54,7 @@ class MessageCreate(BaseModel):
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: RunSQLResult | WriteSheetResult | str
+    content: RunSQLResult | WriteToWorkbookResult | str
     state_path: str
 
 

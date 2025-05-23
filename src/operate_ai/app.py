@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -9,14 +10,19 @@ from uuid import uuid4
 import httpx
 import pandas as pd
 import streamlit as st
+from dotenv import load_dotenv
 from loguru import logger
 from pydantic import ValidationError
 
 from operate_ai.api import ChatMessage, ThreadInfo, WorkspaceInfo
-from operate_ai.cfo_graph import RunSQLResult, WriteSheetResult
+from operate_ai.cfo_graph import RunSQLResult, WriteToWorkbookResult
+
+load_dotenv()
 
 # API configuration
-API_URL = "http://localhost:8000"
+API_HOST = os.getenv("API_HOST", "http://localhost")
+API_PORT = os.getenv("API_PORT", "8000")
+API_URL = f"{API_HOST}:{API_PORT}"
 TIMEOUT = 300
 COUNT_DOWN_SECONDS = 20
 CONTINUE_MESSAGE = "Looks good, please continue."
@@ -94,13 +100,13 @@ async def upload_csv_to_workspace(workspace_id: str, file: io.BytesIO):
     file_path.write_bytes(file.getbuffer())
 
 
-def parse_response(resp: Any) -> RunSQLResult | WriteSheetResult | str:
+def parse_response(resp: Any) -> RunSQLResult | WriteToWorkbookResult | str:
     # If already correct type, return as is
-    if isinstance(resp, (RunSQLResult, WriteSheetResult)):
+    if isinstance(resp, (RunSQLResult, WriteToWorkbookResult)):
         return resp
     # If dict, try to parse
     if isinstance(resp, dict):
-        for cls in (RunSQLResult, WriteSheetResult):
+        for cls in (RunSQLResult, WriteToWorkbookResult):
             try:
                 return cls.model_validate(resp)
             except ValidationError:
@@ -109,7 +115,7 @@ def parse_response(resp: Any) -> RunSQLResult | WriteSheetResult | str:
     if isinstance(resp, str):
         try:
             data = json.loads(resp)
-            for cls in (RunSQLResult, WriteSheetResult):
+            for cls in (RunSQLResult, WriteToWorkbookResult):
                 try:
                     return cls.model_validate(data)
                 except ValidationError:
@@ -245,7 +251,7 @@ async def main():
                                     sql_text = "(Could not read SQL file)"
                                 st.code(sql_text, language="sql")
 
-                    elif isinstance(resp, WriteSheetResult):
+                    elif isinstance(resp, WriteToWorkbookResult):
                         st.session_state.show_countdown = True
                         st.markdown("Wrote the results to a Workbook, please review")
                         with st.expander("Show Results"):
@@ -256,7 +262,10 @@ async def main():
                                 sheet_tabs = st.tabs(sheet_names)
                                 for tab, sheet_name in zip(sheet_tabs, sheet_names):
                                     with tab:
-                                        st.dataframe(excel_data[sheet_name])  # type: ignore
+                                        try:
+                                            st.dataframe(excel_data[sheet_name])  # type: ignore
+                                        except Exception:
+                                            st.error(f"Could not read sheet: {sheet_name}")
                                 file_bytes = Path(excel_path).read_bytes()
                                 st.download_button(
                                     label="Download Excel file",

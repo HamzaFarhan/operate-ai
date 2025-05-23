@@ -1,4 +1,4 @@
-Which industry is the most profitable in 2024? Give me a quick analysis in markdown.
+Which industry is the most profitable in 2024? write results to a sheet in a workbook.
 
 No need for a workbook. Just give me a quick analysis in markdown.
 

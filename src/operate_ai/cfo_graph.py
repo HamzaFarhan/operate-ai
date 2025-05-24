@@ -512,42 +512,42 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
                 {"role": "user", "content": self.user_prompt, "state_path": ctx.deps.agent_deps.state_path}
             )
         error_result = End(data="Ran into an error. Please try again.")
+        async with ctx.deps.agent.run_mcp_servers():
+            res = await ctx.deps.agent.run(
+                user_prompt=self.user_prompt,
+                deps=ctx.deps.agent_deps,
+                message_history=ctx.state.message_history,
+            )
         try:
-            async with ctx.deps.agent.run_mcp_servers():
-                res = await ctx.deps.agent.run(
-                    user_prompt=self.user_prompt,
-                    deps=ctx.deps.agent_deps,
-                    message_history=ctx.state.message_history,
-                )
-                ctx.state.message_history += res.new_messages()
-                if isinstance(res.output, RunSQL):
-                    if ctx.state.run_sql_attempts < MAX_RETRIES:
-                        return RunSQLNode(
-                            purpose=res.output.purpose,
-                            query=res.output.query,
-                            preview_rows=res.output.preview_rows,
-                            file_name=res.output.file_name,
-                        )
-                    return error_result
-                # elif isinstance(res.output, WriteSheetFromFile):
-                #     if ctx.state.write_sheet_attempts < MAX_RETRIES:
-                #         return WriteSheetNode(
-                #             file_path=res.output.file_path,
-                #             sheet_name=res.output.sheet_name,
-                #             workbook_name=res.output.workbook_name,
-                #         )
-                #     return error_result
-                elif isinstance(res.output, UserInteraction):
-                    return UserInteractionNode(message=res.output.message)
-                elif isinstance(res.output, WriteDataToExcelResult):
-                    ctx.state.chat_messages.append(
-                        {"role": "assistant", "content": res.output, "state_path": ctx.deps.agent_deps.state_path}
+            ctx.state.message_history += res.new_messages()
+            if isinstance(res.output, RunSQL):
+                if ctx.state.run_sql_attempts < MAX_RETRIES:
+                    return RunSQLNode(
+                        purpose=res.output.purpose,
+                        query=res.output.query,
+                        preview_rows=res.output.preview_rows,
+                        file_name=res.output.file_name,
                     )
-                    return End(data=res.output)
-                elif isinstance(res.output, TaskResult):
-                    return TaskResultNode(message=res.output.message)
-                else:
-                    return error_result
+                return error_result
+            # elif isinstance(res.output, WriteSheetFromFile):
+            #     if ctx.state.write_sheet_attempts < MAX_RETRIES:
+            #         return WriteSheetNode(
+            #             file_path=res.output.file_path,
+            #             sheet_name=res.output.sheet_name,
+            #             workbook_name=res.output.workbook_name,
+            #         )
+            #     return error_result
+            elif isinstance(res.output, UserInteraction):
+                return UserInteractionNode(message=res.output.message)
+            elif isinstance(res.output, WriteDataToExcelResult):
+                ctx.state.chat_messages.append(
+                    {"role": "assistant", "content": res.output, "state_path": ctx.deps.agent_deps.state_path}
+                )
+                return End(data=res.output)
+            elif isinstance(res.output, TaskResult):
+                return TaskResultNode(message=res.output.message)
+            else:
+                return error_result
         except Exception as e:
             logger.error(f"Error running agent: {e}")
             return error_result

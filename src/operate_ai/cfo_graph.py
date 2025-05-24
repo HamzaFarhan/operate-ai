@@ -279,7 +279,7 @@ class RunSQLNode(BaseNode[GraphState, GraphDeps, RunSQLResult]):
             ctx.state.message_history.append(user_message(sql_result.model_dump_json(exclude={"purpose"})))
             return End(data=sql_result)
         except Exception as e:
-            logger.error(f"Error running SQL query: {e}")
+            logger.exception("Error running SQL query")
             ctx.state.message_history.append(user_message(content=f"Error in RunSQL: {str(e)}"))
             ctx.state.run_sql_attempts += 1
             return RunAgentNode(user_prompt="")
@@ -396,7 +396,7 @@ class WriteSheetNode(BaseNode[GraphState, GraphDeps, WriteDataToExcelResult]):
             ctx.state.message_history.append(user_message(write_sheet_result.model_dump_json()))
             return End(data=write_sheet_result)
         except Exception as e:
-            logger.error(f"Error writing sheet: {e}")
+            logger.exception("Error writing sheet")
             ctx.state.message_history.append(user_message(content=f"Error in WriteSheet: {str(e)}"))
             ctx.state.write_sheet_attempts += 1
             return RunAgentNode(user_prompt="")
@@ -548,16 +548,16 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
                 return TaskResultNode(message=res.output.message)
             else:
                 return error_result
-        except Exception as e:
-            logger.error(f"Error running agent: {e}")
+        except Exception:
+            logger.exception("Error running agent")
             return error_result
 
 
 graph = Graph(nodes=(RunAgentNode, RunSQLNode, UserInteractionNode, TaskResultNode), name="CFO Graph")
 # try:
 #     graph.mermaid_save(Path("cfo_graph.jpg"), direction="LR", highlighted_nodes=RunAgentNode)
-# except Exception as e:
-#     logger.error(f"Error saving graph: {e}")
+# except Exception:
+#     logger.exception("Error saving graph")
 
 
 def setup_thread_dirs(thread_dir: Path | str):

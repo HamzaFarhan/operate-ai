@@ -99,8 +99,8 @@ async def list_workspaces() -> list[WorkspaceInfo]:
                         thread_count=thread_count,
                     )
                 )
-            except Exception as e:
-                logger.error(f"Error reading workspace {workspace_dir}: {e}")
+            except Exception:
+                logger.exception(f"Error reading workspace {workspace_dir}")
 
     return workspaces
 
@@ -139,8 +139,8 @@ async def create_thread(workspace_id: str, thread_data: ThreadCreate) -> ThreadI
             new_results_dir = thread_dir / "results"
             for file in prev_results_dir.iterdir():
                 shutil.copy2(file, new_results_dir / file.name)
-        except Exception as e:
-            logger.error(f"Error copying previous state: {e}")
+        except Exception:
+            logger.exception("Error copying previous state")
 
     thread_info = ThreadInfo(
         id=thread_id,
@@ -168,8 +168,8 @@ async def list_threads(workspace_id: str) -> list[ThreadInfo]:
         if thread_dir.is_dir() and states_dir.exists():
             try:
                 threads.append(ThreadInfo.model_validate_json((thread_dir / "metadata.json").read_text()))
-            except Exception as e:
-                logger.error(f"Error reading thread {thread_dir}: {e}")
+            except Exception:
+                logger.exception(f"Error reading thread {thread_dir}")
 
     return threads
 
@@ -191,7 +191,7 @@ async def create_message(workspace_id: str, thread_id: str, message: MessageCrea
         )
         return ChatMessage(role="assistant", content=response, state_path=str(get_prev_state_path(thread_dir)))
     except Exception as e:
-        logger.error(f"Error processing message: {e}")
+        logger.exception("Error processing message")
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
 
 
@@ -212,7 +212,7 @@ async def list_messages(workspace_id: str, thread_id: str) -> list[ChatMessage]:
             for message in prev_state.chat_messages
         ]
     except Exception as e:
-        logger.error(f"Error reading messages: {e}")
+        logger.exception("Error reading messages")
         raise HTTPException(status_code=500, detail=f"Error reading messages: {str(e)}")
 
 

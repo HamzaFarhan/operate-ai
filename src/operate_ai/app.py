@@ -26,7 +26,7 @@ API_URL = f"http://{API_HOST}:{API_PORT}"
 WORKSPACES_DIR = Path(os.getenv("WORKSPACES_DIR", "workspaces"))
 WORKSPACES_DIR.mkdir(exist_ok=True)
 logger.info(f"Created workspaces directory at {WORKSPACES_DIR}")
-TIMEOUT = 600
+TIMEOUT = 900
 COUNT_DOWN_SECONDS = 20
 CONTINUE_MESSAGE = "Looks good, please continue."
 

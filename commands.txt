@@ -39,7 +39,7 @@ The typical flow it does is:
 1. Run an SQL query
 2. Show the results and ask for review
 3. Continue after:
-    - A timeout
+    - A 30 secondtimeout
     - User feedback
     - User clicks on the "Continue" button
 4. Runs steps 1-3 until all analysis is complete

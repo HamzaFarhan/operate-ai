@@ -27,7 +27,7 @@ WORKSPACES_DIR = Path(os.getenv("WORKSPACES_DIR", "workspaces"))
 WORKSPACES_DIR.mkdir(exist_ok=True)
 logger.info(f"Created workspaces directory at {WORKSPACES_DIR}")
 TIMEOUT = 900
-COUNT_DOWN_SECONDS = 20
+COUNT_DOWN_SECONDS = 30
 CONTINUE_MESSAGE = "Looks good, please continue."
 
 st.set_page_config(layout="wide")

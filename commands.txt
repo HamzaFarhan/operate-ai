@@ -23,18 +23,12 @@ sudo su -
 cd /opt/apps-demo/operateai-app/operate-ai
  ... Make changes 
 
-# Build Docker Image (UI)
-cd /opt/apps-demo/operateai-app/
-docker build . -f operate-ai/Dockerfile_ui_app -t gcr.io/dreamai-pocs/operateai-ui-app:v1
+cd /opt/apps-demo/operateai-app/ && docker build . -f operate-ai/Dockerfile_ui_app -t gcr.io/dreamai-pocs/operateai-ui-app:v1 && docker build . -f operate-ai/Dockerfile_bkend_app -t gcr.io/dreamai-pocs/operateai-bkend-app:v1
 
-# Build Docker Image (Backend)
-cd /opt/apps-demo/operateai-app
-docker build . -f operate-ai/Dockerfile_bkend_app -t gcr.io/dreamai-pocs/operateai-bkend-app:v1
 
-# Restart Containers:
-cd /opt/apps-demo/operateai-app
-docker-compose down
-docker-compose up -d
+docker-compose down && docker-compose up -d
+
+cd /opt/data/operatea-app/data/workspaces
 
 # Check logs:
 docker logs -f operateai-ui-app

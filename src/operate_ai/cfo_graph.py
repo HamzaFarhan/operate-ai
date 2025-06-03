@@ -36,7 +36,7 @@ MAX_RETRIES = 10
 MEMORY_FILE_PATH = os.getenv("MEMORY_FILE_PATH", "memory.json")
 
 
-def user_message(content: str) -> ModelRequest:
+def user_message(content: str) -> ModelRequest
     return ModelRequest(parts=[UserPromptPart(content=content)])
 
 

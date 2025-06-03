@@ -1,0 +1,26 @@
+query,expected_output,strategy
+"Calculate the Customer Lifetime Value (LTV) for the Jan 2023 customer cohort by subscription type (Monthly, Annual, and Total combined)","{
+  ""Monthly"": 2060.78,
+  ""Annual"": 4470.93,
+  ""Total"": 2507.01
+}","Use the formula LTV = (ARPU / Churn Rate) × Profit Margin. Take ARPU by subscription type from Step 2, churn rates from Step 3, apply 75% profit margin. Higher ARPU and lower churn = higher LTV. Annual customers should have higher LTV than monthly."
+"Show LTV breakdown by initial plan type (Basic, Pro, Enterprise) for the Jan 2023 cohort","{
+  ""Basic"": 1526.12,
+  ""Pro"": 2166.35,
+  ""Enterprise"": 11567.52
+}","Calculate LTV using ARPU and churn rates by plan type. Enterprise customers should have highest LTV (high ARPU, low churn), Basic should have lowest LTV (low ARPU, high churn). This shows customer segment value."
+Calculate LTV by industry segment for customers who were active in January 2023,"{
+  ""Healthcare"": 2812.13,
+  ""Education"": 1114.39,
+  ""Retail"": 2455.9,
+  ""Other"": 4693.5,
+  ""Tech"": 3279.93
+}",Apply LTV formula using industry-specific ARPU and churn rates. Shows which industries provide most valuable long-term customers. Industries with high ARPU and low churn will have highest LTV.
+What is the LTV by acquisition channel for the January 2023 customer cohort?,"{
+  ""Affiliate"": 2109.63,
+  ""Paid Search"": 1912.6,
+  ""Social Media"": 2989.31,
+  ""Email"": 4043.23,
+  ""Content"": 720.0
+}",Calculate LTV using channel-specific ARPU and churn rates. Reveals which marketing channels bring the most valuable customers over their lifetime. Channels with low churn and high ARPU generate highest LTV.
+What profit margin was used in the LTV calculation and what is the formula?,"Profit Margin: 0.75, Formula: LTV = (ARPU / Churn Rate) × Profit Margin",The LTV calculation uses a 75% profit margin assumption (typical for SaaS) and the standard formula: LTV = (Average Revenue Per User / Churn Rate) × Profit Margin. This accounts for the fact that not all revenue becomes profit.

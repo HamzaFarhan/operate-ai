@@ -36,7 +36,7 @@ MAX_RETRIES = 10
 MEMORY_FILE_PATH = os.getenv("MEMORY_FILE_PATH", "memory.json")
 
 
-def user_message(content: str) -> ModelRequest
+def user_message(content: str) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=content)])
 
 
@@ -160,13 +160,18 @@ class RunSQL(BaseModel):
     query: str = Field(
         description=(
             "The SQL query to execute."
-            "When reading a csv, use the FULL path with the data_dir included."
+            "When reading a csv, use the FULL path with the data_dir included.\n"
             "Example: 'select names from read_csv('workspaces/1/data/orders.csv')'"
         )
     )
     preview_rows: int = Field(description="Number of rows to preview. 2-5 should be enough for most queries.")
     file_name: str | None = Field(
-        description="Descriptive name of the file based on the query to save the result to in the `analysis_dir`."
+        description=(
+            "Descriptive name of the file based on the query to save the result to in the `analysis_dir`.\n"
+            "If None, a file path will be created in the `analysis_dir` based on the current timestamp.\n"
+            "Example: 'customers_joined_in_2023.csv'\n"
+            "'.csv' is optional. It will be added automatically if not provided."
+        )
     )
 
 

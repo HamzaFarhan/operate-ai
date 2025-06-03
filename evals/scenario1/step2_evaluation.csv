@@ -1,0 +1,26 @@
+query,expected_output,strategy
+"Calculate the Average Revenue Per User (ARPU) for the Jan 2023 customer cohort by subscription type (Monthly, Annual, and Total combined)","{
+  ""Monthly"": 1549.98,
+  ""Annual"": 1986.88,
+  ""Total"": 1671.34
+}","Take customers active in Jan 2023, get all their orders from Jan-Dec 2023, sum up profit by their initial subscription type (Monthly/Annual), then divide total profit by number of customers in each segment. ARPU = Total Profit / Number of Customers."
+"Show ARPU breakdown by initial plan type (Basic, Pro, Enterprise) for the Jan 2023 cohort","{
+  ""Basic"": 1173.89,
+  ""Pro"": 1444.23,
+  ""Enterprise"": 3855.84
+}","Group Jan 2023 customers by their original plan choice (Basic, Pro, Enterprise), calculate total profit each group generated in 2023, then divide by customer count in each group. Higher plans should show higher ARPU."
+Calculate ARPU by industry segment for customers who were active in January 2023,"{
+  ""Healthcare"": 1666.28,
+  ""Education"": 1114.39,
+  ""Retail"": 1733.54,
+  ""Other"": 1564.5,
+  ""Tech"": 1913.29
+}","Segment the Jan 2023 cohort by industry (Tech, Healthcare, Retail, Education, Other), sum their 2023 profits by industry, divide by customer count per industry. Shows which industries generate most revenue per customer."
+What is the ARPU by acquisition channel for the January 2023 customer cohort?,"{
+  ""Affiliate"": 1875.32,
+  ""Paid Search"": 1350.04,
+  ""Social Media"": 1860.15,
+  ""Email"": 1796.81,
+  ""Content"": 960.0
+}","Group customers by how they originally found us (Paid Search, Social Media, Email, etc.), calculate average profit per customer by channel during 2023. Reveals which marketing channels bring the most valuable customers."
+What was the total profit generated in 2023 by customers who were active in January 2023?,960.0,"Sum up all profit from orders placed between Jan 1, 2023 and Dec 31, 2023 by customers who were active subscribers in January 2023. This is the total revenue contribution from this specific customer cohort."

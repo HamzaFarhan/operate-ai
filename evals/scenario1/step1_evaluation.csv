@@ -1,0 +1,25 @@
+query,expected_output,strategy
+How many customers were active in January 2023?,54,Count unique customers who had active subscriptions during January 2023. A subscription is active if it started before or during Jan 2023 AND either ended after Jan 1 2023 or is still ongoing.
+Show me the breakdown of active Jan 2023 customers by their initial subscription type (Monthly vs Annual),"{
+  ""Monthly"": 39,
+  ""Annual"": 15
+}","For each customer active in Jan 2023, look at their very first subscription to determine if they initially chose Monthly or Annual billing. Use initial choice, not current status."
+"Break down active Jan 2023 customers by their initial plan type (Basic, Pro, Enterprise)","{
+  ""Basic"": 26,
+  ""Pro"": 20,
+  ""Enterprise"": 8
+}","For each customer active in Jan 2023, identify which plan they started with originally (Basic, Pro, or Enterprise). This shows their initial commitment level, not what they might have upgraded/downgraded to later."
+Show the industry distribution of customers who were active in January 2023,"{
+  ""Retail"": 17,
+  ""Tech"": 16,
+  ""Healthcare"": 9,
+  ""Education"": 8,
+  ""Other"": 4
+}","Group the Jan 2023 active customers by their industry segment (Tech, Healthcare, Retail, Education, Other). This helps understand which industries our active customer base comes from."
+What are the acquisition channels for customers active in January 2023?,"{
+  ""Paid Search"": 17,
+  ""Social Media"": 15,
+  ""Email"": 12,
+  ""Affiliate"": 9,
+  ""Content"": 1
+}","Show how our Jan 2023 active customers originally found us - through Paid Search, Social Media, Email, Affiliate, or Content marketing. This tells us which channels brought our most engaged customers."

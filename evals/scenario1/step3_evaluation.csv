@@ -1,0 +1,26 @@
+query,expected_output,strategy
+"Calculate the churn rate for the Jan 2023 customer cohort by subscription type (Monthly, Annual, and Total combined)","{
+  ""Monthly"": 0.5641,
+  ""Annual"": 0.3333,
+  ""Total"": 0.5
+}","Take customers active in Jan 2023, count how many churned during 2023, divide by total customers in each subscription type segment. Churn Rate = Churned Customers / Total Customers. If 0% churn, assume 5-year customer lifetime (20% annual churn rate)."
+"Show churn rate breakdown by initial plan type (Basic, Pro, Enterprise) for the Jan 2023 cohort","{
+  ""Basic"": 0.5769,
+  ""Pro"": 0.5,
+  ""Enterprise"": 0.25
+}","Group Jan 2023 customers by their original plan choice, count churns in each group during 2023, calculate churn rate per plan. Higher-value customers (Enterprise) typically have lower churn rates."
+Calculate churn rate by industry segment for customers who were active in January 2023,"{
+  ""Healthcare"": 0.4444,
+  ""Education"": 0.75,
+  ""Retail"": 0.5294,
+  ""Other"": 0.25,
+  ""Tech"": 0.4375
+}","Segment the Jan 2023 cohort by industry, track which customers churned during 2023 by industry, calculate churn rates. Shows which industries have more stable vs volatile customer relationships."
+What is the churn rate by acquisition channel for the January 2023 customer cohort?,"{
+  ""Affiliate"": 0.6667,
+  ""Paid Search"": 0.5294,
+  ""Social Media"": 0.4667,
+  ""Email"": 0.3333,
+  ""Content"": 1.0
+}","Group customers by how they originally found us, calculate what percentage churned during 2023 by channel. Reveals which marketing channels bring customers who stick around vs those who leave quickly."
+How many customers from the Jan 2023 cohort actually churned during 2023?,27,"Count customers from the Jan 2023 active cohort who had a subscription with Status=""Churned"" and EndDate between Jan 1, 2023 and Dec 31, 2023. This is the raw number of customers lost from our starting cohort."

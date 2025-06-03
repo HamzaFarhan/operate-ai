@@ -1,0 +1,63 @@
+query,expected_output,strategy
+Calculate the LTV to CAC ratio for each acquisition channel for the Jan 2023 customer cohort,"{
+  ""Affiliate"": 4.22,
+  ""Paid Search"": 2.39,
+  ""Social Media"": 4.98,
+  ""Email"": 16.17,
+  ""Content"": 1.8
+}","Take LTV by channel from Step 4, get average Customer Acquisition Cost by channel from the data, calculate LTV/CAC ratio. Higher ratios mean more profitable channels. Ratios above 3x are excellent, above 2x are good, above 1x break-even."
+Show the Customer Acquisition Cost (CAC) for each acquisition channel for the Jan 2023 cohort,"{
+  ""Affiliate"": 500,
+  ""Paid Search"": 800,
+  ""Social Media"": 600,
+  ""Email"": 250,
+  ""Content"": 400
+}",Calculate average CustomerAcquisitionCost by AcquisitionChannel for customers who were active in Jan 2023. This shows how much it costs on average to acquire a customer through each marketing channel.
+Provide a complete profitability analysis comparing LTV and CAC by acquisition channel,"{
+  ""Affiliate"": {
+    ""ltv"": 2109.63,
+    ""cac"": 500,
+    ""ltv_cac_ratio"": 4.22,
+    ""customer_count"": 9,
+    ""profitability_status"": ""Excellent (LTV/CAC >= 3x)""
+  },
+  ""Paid Search"": {
+    ""ltv"": 1912.6,
+    ""cac"": 800,
+    ""ltv_cac_ratio"": 2.39,
+    ""customer_count"": 17,
+    ""profitability_status"": ""Good (LTV/CAC >= 2x)""
+  },
+  ""Social Media"": {
+    ""ltv"": 2989.31,
+    ""cac"": 600,
+    ""ltv_cac_ratio"": 4.98,
+    ""customer_count"": 15,
+    ""profitability_status"": ""Excellent (LTV/CAC >= 3x)""
+  },
+  ""Email"": {
+    ""ltv"": 4043.23,
+    ""cac"": 250,
+    ""ltv_cac_ratio"": 16.17,
+    ""customer_count"": 12,
+    ""profitability_status"": ""Excellent (LTV/CAC >= 3x)""
+  },
+  ""Content"": {
+    ""ltv"": 720.0,
+    ""cac"": 400,
+    ""ltv_cac_ratio"": 1.8,
+    ""customer_count"": 1,
+    ""profitability_status"": ""Break-even (LTV/CAC >= 1x)""
+  }
+}","Combine LTV and CAC data to show complete picture: LTV value, CAC cost, LTV/CAC ratio, customer count, and profitability status. Categorize each channel as Excellent (3x+), Good (2x+), Break-even (1x+), or Unprofitable (<1x)."
+Which acquisition channels have an LTV/CAC ratio above 3x (excellent profitability)?,"{
+  ""Affiliate"": 4.22,
+  ""Social Media"": 4.98,
+  ""Email"": 16.17
+}",Filter channels where LTV/CAC ratio is 3.0 or higher. These are the most profitable acquisition channels that generate at least 3x their acquisition cost in customer lifetime value.
+What is the interpretation guide for LTV/CAC ratios and what thresholds should be used?,"{
+  ""excellent_threshold"": ""LTV/CAC >= 3x"",
+  ""good_threshold"": ""LTV/CAC >= 2x"",
+  ""breakeven_threshold"": ""LTV/CAC >= 1x"",
+  ""interpretation"": ""Higher LTV/CAC ratios indicate more profitable acquisition channels""
+}","Provide the standard SaaS industry thresholds: 3x+ is excellent, 2x+ is good, 1x+ is break-even, <1x is unprofitable. Explain that higher LTV/CAC ratios indicate more efficient customer acquisition spend."

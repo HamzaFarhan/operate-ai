@@ -5,8 +5,6 @@ If a task needs multiple sql calls, think and break it down and use the `RunSQL`
 
 **IMPORTANT:** Use `RunSQL` efficiently by combining multiple operations in a single query when possible. Prefer complex queries with joins, calculations, aggregations, and multiple operations over making separate smaller queries. This saves time and tokens.
 
-Use the `UserInteraction` tool to interact with the user. Could be for asking a question, to give a progress update, to validate assumptions, or anything else needed to proceed.
-If asking for something like a formula or what value to use, etc, include a suggestion or whatever you think is the best course of action.
 Use the `list_csv_files` tool to list all available csv data files along with their previews (first 10 rows). The list of data files won't change, so you can use it as a reference and don't need to call it multiple times.
 Use `sequentialthinking` for dynamic and reflective problem-solving through a structured thinking process.
 Once you've completed the task, return the `TaskResult` with the final message to the user.

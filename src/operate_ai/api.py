@@ -10,7 +10,13 @@ from fastapi import FastAPI, HTTPException
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from operate_ai.cfo_graph import RunSQLResult, WriteDataToExcelResult, get_prev_state_path, load_prev_state
+from operate_ai.cfo_graph import (
+    RunSQLResult,
+    TaskResult,
+    WriteDataToExcelResult,
+    get_prev_state_path,
+    load_prev_state,
+)
 from operate_ai.cfo_graph import thread as run_thread
 
 load_dotenv()
@@ -189,6 +195,8 @@ async def create_message(workspace_id: str, thread_id: str, message: MessageCrea
         response = await run_thread(
             thread_dir=thread_dir, user_prompt=message.content, prev_state_path=message.prev_state_path
         )
+        if isinstance(response, TaskResult):
+            response = response.message
         return ChatMessage(role="assistant", content=response, state_path=str(get_prev_state_path(thread_dir)))
     except Exception as e:
         logger.exception("Error processing message")

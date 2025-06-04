@@ -456,20 +456,26 @@ class TaskResult(BaseModel):
 
 
 @dataclass
-class TaskResultNode(BaseNode[GraphState, GraphDeps, str]):
+class TaskResultNode(BaseNode[GraphState, GraphDeps, TaskResult]):
     """Pass to End."""
 
     docstring_notes = True
-    message: str
+    task_result: TaskResult
 
-    async def run(self, ctx: GraphRunContext[GraphState, GraphDeps]) -> End[str]:  # noqa: ARG002
+    async def run(self, ctx: GraphRunContext[GraphState, GraphDeps]) -> End[TaskResult]:  # noqa: ARG002
         ctx.state.chat_messages.append(
-            {"role": "assistant", "content": self.message, "state_path": ctx.deps.agent_deps.state_path}
+            {
+                "role": "assistant",
+                "content": self.task_result.message,
+                "state_path": ctx.deps.agent_deps.state_path,
+            }
         )
-        return End(data=self.message)
+        return End(data=self.task_result)
 
 
-def create_agent(model: Model | KnownModelName, workspace_dir: Path | str) -> Agent[AgentDeps, str]:
+def create_agent(
+    model: Model | KnownModelName, workspace_dir: Path | str, do_user_interaction: bool = True
+) -> Agent[AgentDeps, str]:
     thinking_server = MCPServerStdio(
         command="npx", args=["-y", "@modelcontextprotocol/server-sequential-thinking"]
     )
@@ -479,14 +485,12 @@ def create_agent(model: Model | KnownModelName, workspace_dir: Path | str) -> Ag
         env={"MEMORY_FILE_PATH": str(Path(workspace_dir) / Path(MEMORY_FILE_PATH))},
     )
     excel_server = MCPServerStdio(command="uvx", args=["../../../excel-mcp-server", "stdio"])
+    prompts = [Path("./prompts/cfo.md").read_text(), Path("./prompts/memory.md").read_text()]
+    if do_user_interaction:
+        prompts.insert(1, Path("./prompts/user_interaction.md").read_text())
     return Agent(
         model=model,
-        instructions=[
-            Path("./prompts/cfo.md").read_text(),
-            Path("./prompts/memory.md").read_text(),
-            add_current_time,
-            add_dirs,
-        ],
+        instructions=[*prompts, add_current_time, add_dirs],
         deps_type=AgentDeps,
         retries=MAX_RETRIES,
         tools=[list_csv_files, calculate_sum, calculate_difference, calculate_mean],
@@ -497,7 +501,7 @@ def create_agent(model: Model | KnownModelName, workspace_dir: Path | str) -> Ag
 
 
 @dataclass
-class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExcelResult | str]):
+class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExcelResult | TaskResult | str]):
     """Run the agent."""
 
     docstring_notes = True
@@ -510,7 +514,7 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
         # | WriteSheetNode
         | UserInteractionNode
         | TaskResultNode
-        | End[RunSQLResult | WriteDataToExcelResult | str]
+        | End[RunSQLResult | WriteDataToExcelResult | TaskResult | str]
     ):
         if self.user_prompt:
             ctx.state.chat_messages.append(
@@ -550,7 +554,7 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
                 )
                 return End(data=res.output)
             elif isinstance(res.output, TaskResult):
-                return TaskResultNode(message=res.output.message)
+                return TaskResultNode(task_result=res.output)
             else:
                 return error_result
         except Exception:
@@ -615,8 +619,11 @@ async def load_prev_state(thread_dir: Path | str, prev_state_path: Path | str | 
 
 
 async def thread(
-    thread_dir: Path | str, user_prompt: str, prev_state_path: Path | str | None = None
-) -> RunSQLResult | WriteDataToExcelResult | str:
+    thread_dir: Path | str,
+    user_prompt: str,
+    do_user_interaction: bool = True,
+    prev_state_path: Path | str | None = None,
+) -> RunSQLResult | WriteDataToExcelResult | TaskResult | str:
     thread_dir = Path(thread_dir).expanduser().resolve()
     setup_thread_dirs(thread_dir)
     data_dir = thread_dir.parent.parent / "data"
@@ -641,7 +648,9 @@ async def thread(
         results_dir=str(results_dir),
         state_path=str(persistence_path),
     )
-    agent = create_agent(model=model, workspace_dir=thread_dir.parent.parent)
+    agent = create_agent(
+        model=model, workspace_dir=thread_dir.parent.parent, do_user_interaction=do_user_interaction
+    )
     res = await graph.run(
         start_node=RunAgentNode(user_prompt=user_prompt),
         state=state,
@@ -659,8 +668,39 @@ async def run_app():
         user_prompt = input(f"{input_prompt} > ")
         if user_prompt.strip().lower() in ["q", ""]:
             return
-        input_prompt = await thread(thread_dir=thread_dir, user_prompt=user_prompt)
+        input_prompt = await thread(thread_dir=thread_dir, user_prompt=user_prompt, do_user_interaction=False)
+
+
+async def eval_run[OutputT](user_prompt: str, output_type: type[OutputT], expected_output: OutputT) -> bool:
+    original_user_prompt = user_prompt
+    thread_dir = Path("/Users/hamza/dev/operate-ai/workspaces/1/threads/1")
+    output = None
+    limit = 10
+    while not isinstance(output, TaskResult) and limit > 0:
+        output = await thread(thread_dir=thread_dir, user_prompt=user_prompt, do_user_interaction=False)
+        logger.info(f"Output: {output}")
+        user_prompt = "go on"
+        limit -= 1
+    if output is None:
+        raise ValueError("Output is None")
+    typer_agent = Agent(
+        name="typer",
+        model="openai:gpt-4.1-nano",
+        output_type=output_type,
+        instructions=f"Convert the result into this format: {output_type}",
+    )
+    user_prompt = f"Task: {original_user_prompt}\n\nResult: {output.model_dump_json() if not isinstance(output, str) else output}"
+    res = await typer_agent.run(user_prompt=user_prompt)
+    logger.info(f"Res: {res.output}")
+    logger.info(f"Expected: {expected_output}")
+    return expected_output == res.output
 
 
 if __name__ == "__main__":
-    asyncio.run(run_app())
+    asyncio.run(
+        eval_run(
+            user_prompt="Count unique customers who had active subscriptions during January 2023. A subscription is active if it started before or during Jan 2023 AND either ended after Jan 1 2023 or is still ongoing. Just the number. Simple.",
+            output_type=int,
+            expected_output=54,
+        )
+    )

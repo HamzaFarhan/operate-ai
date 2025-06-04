@@ -34,6 +34,7 @@ SQL_TIMEOUT_SECONDS = 5
 PREVIEW_ROWS = 10
 MAX_RETRIES = 10
 MEMORY_FILE_PATH = os.getenv("MEMORY_FILE_PATH", "memory.json")
+MODULE_DIR = Path(__file__).parent
 
 
 def user_message(content: str) -> ModelRequest:
@@ -74,7 +75,7 @@ class GraphState:
 
 @dataclass
 class GraphDeps:
-    agent: Agent[AgentDeps, str]
+    agent: Agent[AgentDeps, TaskResult | WriteDataToExcelResult | RunSQL | UserInteraction]
     agent_deps: AgentDeps
 
 
@@ -475,19 +476,21 @@ class TaskResultNode(BaseNode[GraphState, GraphDeps, TaskResult]):
 
 def create_agent(
     model: Model | KnownModelName, workspace_dir: Path | str, do_user_interaction: bool = True
-) -> Agent[AgentDeps, str]:
+) -> Agent[AgentDeps, TaskResult | WriteDataToExcelResult | RunSQL | UserInteraction]:
     thinking_server = MCPServerStdio(
         command="npx", args=["-y", "@modelcontextprotocol/server-sequential-thinking"]
     )
     memory_server = MCPServerStdio(
         command="uv",
-        args=["run", "./memory_mcp.py"],
+        args=["run", str(MODULE_DIR / "memory_mcp.py")],
         env={"MEMORY_FILE_PATH": str(Path(workspace_dir) / Path(MEMORY_FILE_PATH))},
     )
-    excel_server = MCPServerStdio(command="uvx", args=["../../../excel-mcp-server", "stdio"])
-    prompts = [Path("./prompts/cfo.md").read_text(), Path("./prompts/memory.md").read_text()]
+    excel_server = MCPServerStdio(command="uvx", args=[str(MODULE_DIR / "../../../excel-mcp-server"), "stdio"])
+    prompts = [Path(MODULE_DIR / "prompts/cfo.md").read_text(), Path(MODULE_DIR / "prompts/memory.md").read_text()]
+    output_types: list[type] = [TaskResult, WriteDataToExcelResult, RunSQL]
     if do_user_interaction:
-        prompts.insert(1, Path("./prompts/user_interaction.md").read_text())
+        prompts.insert(1, Path(MODULE_DIR / "prompts/user_interaction.md").read_text())
+        output_types.append(UserInteraction)
     return Agent(
         model=model,
         instructions=[*prompts, add_current_time, add_dirs],
@@ -495,7 +498,7 @@ def create_agent(
         retries=MAX_RETRIES,
         tools=[list_csv_files, calculate_sum, calculate_difference, calculate_mean],
         mcp_servers=[thinking_server, memory_server, excel_server],
-        output_type=TaskResult | WriteDataToExcelResult | UserInteraction | RunSQL,  # type: ignore
+        output_type=output_types,
         instrument=True,
     )
 
@@ -526,6 +529,7 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
                 user_prompt=self.user_prompt,
                 deps=ctx.deps.agent_deps,
                 message_history=ctx.state.message_history,
+                model_settings={"temperature": 0.0},
             )
         try:
             ctx.state.message_history += res.new_messages()
@@ -538,14 +542,6 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
                         file_name=res.output.file_name,
                     )
                 return error_result
-            # elif isinstance(res.output, WriteSheetFromFile):
-            #     if ctx.state.write_sheet_attempts < MAX_RETRIES:
-            #         return WriteSheetNode(
-            #             file_path=res.output.file_path,
-            #             sheet_name=res.output.sheet_name,
-            #             workbook_name=res.output.workbook_name,
-            #         )
-            #     return error_result
             elif isinstance(res.output, UserInteraction):
                 return UserInteractionNode(message=res.output.message)
             elif isinstance(res.output, WriteDataToExcelResult):
@@ -553,10 +549,8 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
                     {"role": "assistant", "content": res.output, "state_path": ctx.deps.agent_deps.state_path}
                 )
                 return End(data=res.output)
-            elif isinstance(res.output, TaskResult):
-                return TaskResultNode(task_result=res.output)
             else:
-                return error_result
+                return TaskResultNode(task_result=res.output)
         except Exception:
             logger.exception("Error running agent")
             return error_result
@@ -636,11 +630,10 @@ async def thread(
     persistence = FileStatePersistence(json_file=persistence_path.expanduser().resolve())
     persistence.set_graph_types(graph=graph)
     model = FallbackModel(
-        "openai:gpt-4.1",
+        "anthropic:claude-4-sonnet-20250514",
+        "google-gla:gemini-2.5-flash-preview-05-20",
         "openai:gpt-4.1-mini",
-        "gemini-2.5-flash-preview-05-20",  # type: ignore
-        "google-gla:gemini-2.0-flash",
-        "anthropic:claude-3-5-sonnet-latest",
+        "openai:gpt-4.1",
     )
     agent_deps = AgentDeps(
         data_dir=str(data_dir),
@@ -671,36 +664,5 @@ async def run_app():
         input_prompt = await thread(thread_dir=thread_dir, user_prompt=user_prompt, do_user_interaction=False)
 
 
-async def eval_run[OutputT](user_prompt: str, output_type: type[OutputT], expected_output: OutputT) -> bool:
-    original_user_prompt = user_prompt
-    thread_dir = Path("/Users/hamza/dev/operate-ai/workspaces/1/threads/1")
-    output = None
-    limit = 10
-    while not isinstance(output, TaskResult) and limit > 0:
-        output = await thread(thread_dir=thread_dir, user_prompt=user_prompt, do_user_interaction=False)
-        logger.info(f"Output: {output}")
-        user_prompt = "go on"
-        limit -= 1
-    if output is None:
-        raise ValueError("Output is None")
-    typer_agent = Agent(
-        name="typer",
-        model="openai:gpt-4.1-nano",
-        output_type=output_type,
-        instructions=f"Convert the result into this format: {output_type}",
-    )
-    user_prompt = f"Task: {original_user_prompt}\n\nResult: {output.model_dump_json() if not isinstance(output, str) else output}"
-    res = await typer_agent.run(user_prompt=user_prompt)
-    logger.info(f"Res: {res.output}")
-    logger.info(f"Expected: {expected_output}")
-    return expected_output == res.output
-
-
 if __name__ == "__main__":
-    asyncio.run(
-        eval_run(
-            user_prompt="Count unique customers who had active subscriptions during January 2023. A subscription is active if it started before or during Jan 2023 AND either ended after Jan 1 2023 or is still ongoing. Just the number. Simple.",
-            output_type=int,
-            expected_output=54,
-        )
-    )
+    asyncio.run(run_app())

@@ -40,7 +40,13 @@ class EqEvaluator(Evaluator[Query[OutputsT], OutputsT]):
         return ctx.output == ctx.expected_output
 
 
-async def eval_task[OutputT](query: Query[OutputT], use_excel_tools: bool = False) -> OutputT:
+async def eval_task[OutputT](
+    query: Query[OutputT],
+    use_excel_tools: bool = False,
+    get_prev_state_if_none: bool = False,
+    use_thinking: bool = False,
+    use_memory: bool = False,
+) -> OutputT:
     thread_dir = Path("/Users/hamza/dev/operate-ai/workspaces/1/threads/1")
     output = None
     limit = 10
@@ -51,6 +57,9 @@ async def eval_task[OutputT](query: Query[OutputT], use_excel_tools: bool = Fals
             user_prompt=user_prompt,
             do_user_interaction=False,
             use_excel_tools=use_excel_tools,
+            use_thinking=use_thinking,
+            use_memory=use_memory,
+            get_prev_state_if_none=get_prev_state_if_none,
         )
         logger.info(f"Output: {output}")
         user_prompt = "go on"

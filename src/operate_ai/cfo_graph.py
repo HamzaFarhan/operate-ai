@@ -479,6 +479,9 @@ def create_agent(
     workspace_dir: Path | str,
     do_user_interaction: bool = True,
     use_excel_tools: bool = True,
+    use_thinking: bool = True,
+    use_memory: bool = True,
+    temperature: float = 0.0,
 ) -> Agent[AgentDeps, TaskResult | WriteDataToExcelResult | RunSQL | UserInteraction]:
     thinking_server = MCPServerStdio(
         command="npx", args=["-y", "@modelcontextprotocol/server-sequential-thinking"]
@@ -489,7 +492,11 @@ def create_agent(
         env={"MEMORY_FILE_PATH": str(Path(workspace_dir) / Path(MEMORY_FILE_PATH))},
     )
     excel_server = MCPServerStdio(command="uvx", args=[str(MODULE_DIR / "../../../excel-mcp-server"), "stdio"])
-    mcp_servers = [thinking_server, memory_server]
+    mcp_servers: list[MCPServerStdio] = []
+    if use_thinking:
+        mcp_servers.append(thinking_server)
+    if use_memory:
+        mcp_servers.append(memory_server)
     if use_excel_tools:
         mcp_servers.append(excel_server)
     prompts = [Path(MODULE_DIR / "prompts/cfo.md").read_text(), Path(MODULE_DIR / "prompts/memory.md").read_text()]
@@ -508,6 +515,7 @@ def create_agent(
         mcp_servers=mcp_servers,
         output_type=output_types,
         instrument=True,
+        model_settings={"temperature": temperature},
     )
 
 
@@ -610,8 +618,12 @@ def get_prev_state_path(thread_dir: Path | str) -> Path | None:
     return prev_states[0] if prev_states else None
 
 
-async def load_prev_state(thread_dir: Path | str, prev_state_path: Path | str | None = None) -> GraphState:
-    prev_state_path = Path(prev_state_path) if prev_state_path else get_prev_state_path(thread_dir)
+async def load_prev_state(
+    thread_dir: Path | str, prev_state_path: Path | str | None = None, get_if_none: bool = True
+) -> GraphState:
+    prev_state_path = (
+        Path(prev_state_path) if prev_state_path else get_prev_state_path(thread_dir) if get_if_none else None
+    )
     logger.info(f"Previous state path: {prev_state_path}")
     if prev_state_path:
         prev_persistence = FileStatePersistence(json_file=prev_state_path.expanduser().resolve())
@@ -624,8 +636,12 @@ async def thread(
     thread_dir: Path | str,
     user_prompt: str,
     do_user_interaction: bool = True,
-    prev_state_path: Path | str | None = None,
     use_excel_tools: bool = True,
+    use_thinking: bool = True,
+    use_memory: bool = True,
+    prev_state_path: Path | str | None = None,
+    get_prev_state_if_none: bool = True,
+    temperature: float = 0.0,
 ) -> RunSQLResult | WriteDataToExcelResult | TaskResult | str:
     thread_dir = Path(thread_dir).expanduser().resolve()
     setup_thread_dirs(thread_dir)
@@ -634,7 +650,9 @@ async def thread(
     results_dir = thread_dir / "results"
     states_dir = thread_dir / "states"
 
-    state = await load_prev_state(thread_dir=thread_dir, prev_state_path=prev_state_path)
+    state = await load_prev_state(
+        thread_dir=thread_dir, prev_state_path=prev_state_path, get_if_none=get_prev_state_if_none
+    )
     persistence_path = states_dir / f"{datetime.now().strftime('%d-%m-%Y_%H-%M-%S')}.json"
     persistence = FileStatePersistence(json_file=persistence_path.expanduser().resolve())
     persistence.set_graph_types(graph=graph)
@@ -655,6 +673,9 @@ async def thread(
         workspace_dir=thread_dir.parent.parent,
         do_user_interaction=do_user_interaction,
         use_excel_tools=use_excel_tools,
+        use_thinking=use_thinking,
+        use_memory=use_memory,
+        temperature=temperature,
     )
     res = await graph.run(
         start_node=RunAgentNode(user_prompt=user_prompt),
@@ -673,7 +694,9 @@ async def run_app():
         user_prompt = input(f"{input_prompt} > ")
         if user_prompt.strip().lower() in ["q", ""]:
             return
-        input_prompt = await thread(thread_dir=thread_dir, user_prompt=user_prompt, do_user_interaction=False)
+        input_prompt = await thread(
+            thread_dir=thread_dir, user_prompt=user_prompt, do_user_interaction=False, use_excel_tools=False
+        )
 
 
 if __name__ == "__main__":

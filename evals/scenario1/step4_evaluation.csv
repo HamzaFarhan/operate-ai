@@ -1,26 +1,26 @@
-query,expected_output,strategy
-"Calculate the Customer Lifetime Value (LTV) for the Jan 2023 customer cohort by subscription type (Monthly, Annual, and Total combined)","{
-  ""Monthly"": 2060.78,
-  ""Annual"": 4470.93,
-  ""Total"": 2507.01
-}","Use the formula LTV = (ARPU / Churn Rate) × Profit Margin. Take ARPU by subscription type from Step 2, churn rates from Step 3, apply 75% profit margin. Higher ARPU and lower churn = higher LTV. Annual customers should have higher LTV than monthly."
-"Show LTV breakdown by initial plan type (Basic, Pro, Enterprise) for the Jan 2023 cohort","{
-  ""Basic"": 1526.12,
-  ""Pro"": 2166.35,
-  ""Enterprise"": 11567.52
-}","Calculate LTV using ARPU and churn rates by plan type. Enterprise customers should have highest LTV (high ARPU, low churn), Basic should have lowest LTV (low ARPU, high churn). This shows customer segment value."
-Calculate LTV by industry segment for customers who were active in January 2023,"{
-  ""Healthcare"": 2812.13,
-  ""Education"": 1114.39,
-  ""Retail"": 2455.9,
-  ""Other"": 4693.5,
-  ""Tech"": 3279.93
-}",Apply LTV formula using industry-specific ARPU and churn rates. Shows which industries provide most valuable long-term customers. Industries with high ARPU and low churn will have highest LTV.
-What is the LTV by acquisition channel for the January 2023 customer cohort?,"{
-  ""Affiliate"": 2109.63,
-  ""Paid Search"": 1912.6,
-  ""Social Media"": 2989.31,
-  ""Email"": 4043.23,
-  ""Content"": 720.0
-}",Calculate LTV using channel-specific ARPU and churn rates. Reveals which marketing channels bring the most valuable customers over their lifetime. Channels with low churn and high ARPU generate highest LTV.
-What profit margin was used in the LTV calculation and what is the formula?,"Profit Margin: 0.75, Formula: LTV = (ARPU / Churn Rate) × Profit Margin",The LTV calculation uses a 75% profit margin assumption (typical for SaaS) and the standard formula: LTV = (Average Revenue Per User / Churn Rate) × Profit Margin. This accounts for the fact that not all revenue becomes profit.
+query,expected_output
+"Calculate the Customer Lifetime Value (LTV) for customers who were active in January 2023, broken down by their initial subscription type (Monthly, Annual, and Total combined). Active customers are those who had subscriptions that started before or during Jan 2023 AND either ended after Jan 1 2023 or are still ongoing. Use the formula: LTV = (ARPU / Churn Rate) × 75% profit margin. ARPU should be calculated from 2023 profit data, churn rate from 2023 churns (assume 20% if 0% churn).","{
+  ""Annual"": 3636.42,
+  ""Monthly"": 2563.77,
+  ""Total"": 2748.73
+}"
+"Show LTV breakdown by initial plan type (Basic, Pro, Enterprise) for customers who were active in January 2023. Use LTV = (ARPU / Churn Rate) × 75% profit margin formula.","{
+  ""Basic"": 1882.39,
+  ""Pro"": 4503.54,
+  ""Enterprise"": 5272.42
+}"
+Calculate LTV by industry segment for customers who were active in January 2023. Apply the formula LTV = (ARPU / Churn Rate) × 75% profit margin using industry-specific ARPU and churn rates.,"{
+  ""Education"": 4425.24,
+  ""Tech"": 2576.77,
+  ""Healthcare"": 3720.61,
+  ""Retail"": 1800.23,
+  ""Other"": 1732.16
+}"
+What is the LTV by acquisition channel for customers who were active in January 2023? Calculate using the standard SaaS formula: LTV = (ARPU / Churn Rate) × 75% profit margin.,"{
+  ""Affiliate"": 1663.01,
+  ""Email"": 2002.78,
+  ""Social Media"": 3619.72,
+  ""Content"": 2334.59,
+  ""Paid Search"": 8493.04
+}"
+What profit margin was used in the LTV calculation and what is the formula?,"Profit Margin: 0.75, Formula: LTV = (ARPU / Churn Rate) × Profit Margin"

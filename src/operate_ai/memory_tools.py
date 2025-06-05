@@ -304,16 +304,3 @@ async def open_nodes(names: list[str]) -> KnowledgeGraph:
         if r.relation_from in selected_entities and r.relation_to in selected_entities
     }
     return KnowledgeGraph(entities=selected_entities, relations=selected_relations)
-
-
-kg = KnowledgeGraph(
-    entities={
-        "alice": Entity(
-            name="alice", entity_type="person", observations=["alice is a person", "alice is 20 years old"]
-        ),
-        "bob": Entity(name="bob", entity_type="person", observations=["bob is a person", "bob is 25 years old"]),
-    },
-    relations={
-        ("alice", "bob", "friend"): Relation(relation_from="alice", relation_to="bob", relation_type="friend")
-    },
-)

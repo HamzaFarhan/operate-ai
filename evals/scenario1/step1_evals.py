@@ -1,4 +1,14 @@
+"""
+Step 1: Data Filtering & Customer Cohort Identification
+Combines ground truth generation with evaluation dataset creation.
+"""
+
+import json
+from datetime import datetime
+from pathlib import Path
+
 import logfire
+import pandas as pd
 from pydantic import BaseModel, Field
 from pydantic_evals import Case, Dataset
 
@@ -42,64 +52,215 @@ type ResultT = (
     | CustomersPerAcquisitionChannel
 )
 
-prev_query = PrevQuery(
-    query="How many customers were active in January 2023?",
-    result=54,
-)
 
-step1_dataset = Dataset[Query[ResultT, int], ResultT](
-    cases=[
-        Case(
-            name="step1_1",
-            inputs=Query(
-                query="How many customers were active in January 2023?\nCount unique customers who had active subscriptions during January 2023. A subscription is active if it started before or during Jan 2023 AND either ended after Jan 1 2023 or is still ongoing.",
-                output_type=int,
+def get_active_customers_jan_2023():
+    """
+    Identifies customers who were active at the start of Jan 2023 and returns their cohort details.
+
+    Returns:
+        dict: Contains counts and breakdowns by various segments
+    """
+    # Load the generated data
+    data_dir = Path("operateai_scenario1_data")
+
+    customers_df = pd.read_csv(data_dir / "customers.csv")
+    subscriptions_df = pd.read_csv(data_dir / "subscriptions.csv")
+
+    # Convert dates to datetime
+    subscriptions_df["StartDate"] = pd.to_datetime(subscriptions_df["StartDate"])
+    subscriptions_df["EndDate"] = pd.to_datetime(subscriptions_df["EndDate"], errors="coerce")
+
+    # Define the period
+    jan_2023_start = datetime(2023, 1, 1)
+    jan_2023_end = datetime(2023, 1, 31)
+
+    # Find subscriptions active in Jan 2023
+    # Active means: started before or during Jan 2023 AND (ended after Jan 1 2023 OR still active)
+    active_subs_jan_2023 = subscriptions_df[
+        (subscriptions_df["StartDate"] <= jan_2023_end)
+        & ((subscriptions_df["EndDate"] >= jan_2023_start) | pd.isna(subscriptions_df["EndDate"]))
+    ]
+
+    # Get unique active customers
+    active_customer_ids = active_subs_jan_2023["CustomerID"].unique()
+
+    # For each active customer, get their INITIAL subscription details (first subscription)
+    initial_subs = []
+    for customer_id in active_customer_ids:
+        customer_subs = subscriptions_df[subscriptions_df["CustomerID"] == customer_id].sort_values("StartDate")
+        if len(customer_subs) > 0:
+            initial_sub = customer_subs.iloc[0]
+            initial_subs.append(
+                {
+                    "CustomerID": customer_id,
+                    "InitialPlanName": initial_sub["PlanName"],
+                    "InitialSubscriptionType": initial_sub["SubscriptionType"],
+                    "InitialStartDate": initial_sub["StartDate"],
+                }
+            )
+
+    initial_subs_df = pd.DataFrame(initial_subs)
+
+    # Merge with customer details
+    cohort_df = initial_subs_df.merge(customers_df, on="CustomerID", how="left")
+
+    # Generate summary statistics
+    result = {
+        "total_active_customers": len(active_customer_ids),
+        "by_subscription_type": cohort_df["InitialSubscriptionType"].value_counts().to_dict(),
+        "by_plan_type": cohort_df["InitialPlanName"].value_counts().to_dict(),
+        "by_industry": cohort_df["IndustrySegment"].value_counts().to_dict(),
+        "by_acquisition_channel": cohort_df["AcquisitionChannel"].value_counts().to_dict(),
+        "by_geography": cohort_df["Geography"].value_counts().to_dict(),
+        "by_customer_type": cohort_df["CustomerType"].value_counts().to_dict(),
+    }
+
+    return result
+
+
+# Define queries once for reuse
+QUERIES = {
+    "total_count": "How many customers were active in January 2023? Active customers are those who had subscriptions that started before or during Jan 2023 AND either ended after Jan 1 2023 or are still ongoing.",
+    "by_subscription_type": "Show me the breakdown of customers who were active in January 2023 by their initial subscription type (Monthly vs Annual). Use each customer's very first subscription to determine their original billing preference.",
+    "by_plan_type": "Break down customers who were active in January 2023 by their initial plan type (Basic, Pro, Enterprise). Show the distribution based on their original plan choice.",
+    "by_industry": "Show the industry distribution of customers who were active in January 2023.",
+    "by_acquisition_channel": "What are the acquisition channels for customers who were active in January 2023?",
+}
+
+
+def create_step1_dataset():
+    """Create the evaluation dataset using ground truth data"""
+    # Get ground truth
+    ground_truth = get_active_customers_jan_2023()
+
+    # Convert ground truth data to expected format
+    subscription_type_data = ground_truth["by_subscription_type"]
+    plan_type_data = ground_truth["by_plan_type"]
+    industry_data = ground_truth["by_industry"]
+    acquisition_data = ground_truth["by_acquisition_channel"]
+
+    prev_query = PrevQuery(
+        query="How many customers were active in January 2023?",
+        result=ground_truth["total_active_customers"],
+    )
+
+    dataset = Dataset[Query[ResultT], ResultT](
+        cases=[
+            Case(
+                name="step1_1",
+                inputs=Query(
+                    query=QUERIES["total_count"],
+                    output_type=int,
+                ),
+                expected_output=ground_truth["total_active_customers"],
             ),
-            expected_output=54,
-        ),
-        Case(
-            name="step1_2",
-            inputs=Query(
-                query="Show me the breakdown of active Jan 2023 customers by their initial subscription type (Monthly vs Annual)\nFor each customer active in Jan 2023, look at their very first subscription to determine if they initially chose Monthly or Annual billing. Use initial choice, not current status.",
-                output_type=CustomersPerSubscriptionType,
+            Case(
+                name="step1_2",
+                inputs=Query(
+                    query=QUERIES["by_subscription_type"],
+                    output_type=CustomersPerSubscriptionType,
+                ),
+                expected_output=CustomersPerSubscriptionType(
+                    monthly=subscription_type_data.get("Monthly", 0),
+                    annual=subscription_type_data.get("Annual", 0),
+                ),
             ),
-            expected_output=CustomersPerSubscriptionType(monthly=39, annual=15),
-        ),
-        Case(
-            name="step1_3",
-            inputs=Query(
-                query="Break down active Jan 2023 customers by their initial plan type (Basic, Pro, Enterprise)\nFor each customer active in Jan 2023, identify which plan they started with originally (Basic, Pro, or Enterprise). This shows their initial commitment level, not what they might have upgraded/downgraded to later.",
-                output_type=CustomersPerPlanType,
+            Case(
+                name="step1_3",
+                inputs=Query(
+                    query=QUERIES["by_plan_type"],
+                    output_type=CustomersPerPlanType,
+                ),
+                expected_output=CustomersPerPlanType(
+                    basic=plan_type_data.get("Basic", 0),
+                    pro=plan_type_data.get("Pro", 0),
+                    enterprise=plan_type_data.get("Enterprise", 0),
+                ),
             ),
-            expected_output=CustomersPerPlanType(basic=26, pro=20, enterprise=8),
-        ),
-        Case(
-            name="step1_4",
-            inputs=Query(
-                query="Show the industry distribution of customers who were active in January 2023\nGroup the Jan 2023 active customers by their industry segment (Tech, Healthcare, Retail, Education, Other). This helps understand which industries our active customer base comes from.",
-                output_type=CustomersPerIndustry,
+            Case(
+                name="step1_4",
+                inputs=Query(
+                    query=QUERIES["by_industry"],
+                    output_type=CustomersPerIndustry,
+                ),
+                expected_output=CustomersPerIndustry(
+                    retail=industry_data.get("Retail", 0),
+                    tech=industry_data.get("Tech", 0),
+                    healthcare=industry_data.get("Healthcare", 0),
+                    education=industry_data.get("Education", 0),
+                    other=industry_data.get("Other", 0),
+                ),
             ),
-            expected_output=CustomersPerIndustry(retail=17, tech=16, healthcare=9, education=8, other=4),
-        ),
-        Case(
-            name="step1_5",
-            inputs=Query(
-                query="What are the acquisition channels for customers active in January 2023?\nShow how our Jan 2023 active customers originally found us - through Paid Search, Social Media, Email, Affiliate, or Content marketing. This tells us which channels brought our most engaged customers.",
-                output_type=CustomersPerAcquisitionChannel,
+            Case(
+                name="step1_5",
+                inputs=Query(
+                    query=QUERIES["by_acquisition_channel"],
+                    output_type=CustomersPerAcquisitionChannel,
+                ),
+                expected_output=CustomersPerAcquisitionChannel(
+                    paid_search=acquisition_data.get("Paid Search", 0),
+                    social_media=acquisition_data.get("Social Media", 0),
+                    email=acquisition_data.get("Email", 0),
+                    affiliate=acquisition_data.get("Affiliate", 0),
+                    content=acquisition_data.get("Content", 0),
+                ),
             ),
-            expected_output=CustomersPerAcquisitionChannel(
-                paid_search=17, social_media=15, email=12, affiliate=9, content=1
-            ),
-        ),
-    ],
-    evaluators=[EqEvaluator[ResultT, int]()],
-)
+        ],
+        evaluators=[EqEvaluator[ResultT]()],
+    )
+
+    return dataset
+
+
+def generate_csv():
+    """Generate CSV file with evaluation cases"""
+    ground_truth = get_active_customers_jan_2023()
+
+    eval_cases = [
+        {
+            "query": QUERIES["total_count"],
+            "expected_output": str(ground_truth["total_active_customers"]),
+        },
+        {
+            "query": QUERIES["by_subscription_type"],
+            "expected_output": json.dumps(ground_truth["by_subscription_type"], indent=2),
+        },
+        {
+            "query": QUERIES["by_plan_type"],
+            "expected_output": json.dumps(ground_truth["by_plan_type"], indent=2),
+        },
+        {
+            "query": QUERIES["by_industry"],
+            "expected_output": json.dumps(ground_truth["by_industry"], indent=2),
+        },
+        {
+            "query": QUERIES["by_acquisition_channel"],
+            "expected_output": json.dumps(ground_truth["by_acquisition_channel"], indent=2),
+        },
+    ]
+
+    # Save to CSV
+    eval_df = pd.DataFrame(eval_cases)
+    output_path = Path("evals/scenario1/step1_evaluation.csv")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    eval_df.to_csv(output_path, index=False)
+
+    print(f"Step 1 evaluation dataset saved to {output_path}")
+    print("Function used: get_active_customers_jan_2023()")
+    print(f"Generated {len(eval_cases)} evaluation cases")
+
+    return eval_df
 
 
 def evaluate():
-    report = step1_dataset.evaluate_sync(task=eval_task, name="step1_evals", max_concurrency=1)
+    dataset = create_step1_dataset()
+    report = dataset.evaluate_sync(task=eval_task, name="step1_evals", max_concurrency=1)
     report.print(include_output=True, include_expected_output=True, include_input=True, include_averages=True)
 
 
 if __name__ == "__main__":
-    evaluate()
+    # Generate CSV
+    generate_csv()
+
+    # Run evaluation
+    # evaluate()

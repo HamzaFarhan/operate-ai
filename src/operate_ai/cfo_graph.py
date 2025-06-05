@@ -475,7 +475,10 @@ class TaskResultNode(BaseNode[GraphState, GraphDeps, TaskResult]):
 
 
 def create_agent(
-    model: Model | KnownModelName, workspace_dir: Path | str, do_user_interaction: bool = True
+    model: Model | KnownModelName,
+    workspace_dir: Path | str,
+    do_user_interaction: bool = True,
+    use_excel_tools: bool = True,
 ) -> Agent[AgentDeps, TaskResult | WriteDataToExcelResult | RunSQL | UserInteraction]:
     thinking_server = MCPServerStdio(
         command="npx", args=["-y", "@modelcontextprotocol/server-sequential-thinking"]
@@ -486,8 +489,13 @@ def create_agent(
         env={"MEMORY_FILE_PATH": str(Path(workspace_dir) / Path(MEMORY_FILE_PATH))},
     )
     excel_server = MCPServerStdio(command="uvx", args=[str(MODULE_DIR / "../../../excel-mcp-server"), "stdio"])
+    mcp_servers = [thinking_server, memory_server]
+    if use_excel_tools:
+        mcp_servers.append(excel_server)
     prompts = [Path(MODULE_DIR / "prompts/cfo.md").read_text(), Path(MODULE_DIR / "prompts/memory.md").read_text()]
-    output_types: list[type] = [TaskResult, WriteDataToExcelResult, RunSQL]
+    output_types: list[type] = [TaskResult, RunSQL]
+    if use_excel_tools:
+        output_types.append(WriteDataToExcelResult)
     if do_user_interaction:
         prompts.insert(1, Path(MODULE_DIR / "prompts/user_interaction.md").read_text())
         output_types.append(UserInteraction)
@@ -497,7 +505,7 @@ def create_agent(
         deps_type=AgentDeps,
         retries=MAX_RETRIES,
         tools=[list_csv_files, calculate_sum, calculate_difference, calculate_mean],
-        mcp_servers=[thinking_server, memory_server, excel_server],
+        mcp_servers=mcp_servers,
         output_type=output_types,
         instrument=True,
     )
@@ -617,6 +625,7 @@ async def thread(
     user_prompt: str,
     do_user_interaction: bool = True,
     prev_state_path: Path | str | None = None,
+    use_excel_tools: bool = True,
 ) -> RunSQLResult | WriteDataToExcelResult | TaskResult | str:
     thread_dir = Path(thread_dir).expanduser().resolve()
     setup_thread_dirs(thread_dir)
@@ -642,7 +651,10 @@ async def thread(
         state_path=str(persistence_path),
     )
     agent = create_agent(
-        model=model, workspace_dir=thread_dir.parent.parent, do_user_interaction=do_user_interaction
+        model=model,
+        workspace_dir=thread_dir.parent.parent,
+        do_user_interaction=do_user_interaction,
+        use_excel_tools=use_excel_tools,
     )
     res = await graph.run(
         start_node=RunAgentNode(user_prompt=user_prompt),

@@ -1,0 +1,174 @@
+source_file,query,expected_output
+arman_evaluation.csv,What is the January 2023 annual subscription type by initial subscription 12 month revenue retention? Calculate as 12 month revenue divided by initial revenue.,1.41
+arman_evaluation.csv,What is the December 2023 annual subscription type by initial subscription 6 month revenue retention? Calculate as 6 month revenue divided by initial revenue.,0.0
+arman_evaluation.csv,What is the January 2023 annual subscription type 12 month revenue retention? Calculate as 12 month revenue divided by initial revenue.,1.55
+arman_evaluation.csv,What is Content CAC from July 2024 to Dec 2024? Calculate as total spend divided by acquisitions.,2921.0
+arman_evaluation.csv,What is monthly plan & pro subscription type churn rate from Jan 2023 to Dec 2023? Calculate as churned subscribers divided by active subscribers on Jan 2023.,0.36
+arman_evaluation.csv,How many unique customers ordered a monthly basic plan from Dec 2023 to Feb 2024?,35
+arman_evaluation.csv,What is 2024 Contribution Margin? Calculate as sum of 2024 profit minus sum of 2024 marketing expenses.,-1441.29
+arman_evaluation.csv,Which marketing acquisition channel has the highest CAC and which has the lowest during the period Feb 2024 to May 2024?,highest_cac_channel='Affiliate' highest_cac_value=4838.0 lowest_cac_channel='Email' lowest_cac_value=571.0
+arman_evaluation.csv,What is ARPU for Tech customers in Oct 2024? Calculate as total revenue divided by number of customers.,252.857143
+arman_evaluation.csv,What is MRR as of Dec 2024? Calculate based on customer count and ARPU.,13770.0
+step1_evaluation.csv,How many customers were active in January 2023? Active customers are those who had subscriptions that started before or during Jan 2023 AND either ended after Jan 1 2023 or are still ongoing.,66
+step1_evaluation.csv,Show me the breakdown of customers who were active in January 2023 by their initial subscription type (Monthly vs Annual). Use each customer's very first subscription to determine their original billing preference.,"{
+  ""Monthly"": 48,
+  ""Annual"": 18
+}"
+step1_evaluation.csv,"Break down customers who were active in January 2023 by their initial plan type (Basic, Pro, Enterprise). Show the distribution based on their original plan choice.","{
+  ""Basic"": 43,
+  ""Pro"": 19,
+  ""Enterprise"": 4
+}"
+step1_evaluation.csv,Show the industry distribution of customers who were active in January 2023.,"{
+  ""Tech"": 29,
+  ""Healthcare"": 17,
+  ""Retail"": 8,
+  ""Education"": 7,
+  ""Other"": 5
+}"
+step1_evaluation.csv,What are the acquisition channels for customers who were active in January 2023?,"{
+  ""Email"": 19,
+  ""Social Media"": 15,
+  ""Paid Search"": 12,
+  ""Affiliate"": 11,
+  ""Content"": 9
+}"
+step2_evaluation.csv,"Calculate the Average Revenue Per User (ARPU) for customers who were active in January 2023, broken down by their initial subscription type (Monthly, Annual, and Total combined). Active customers are those who had subscriptions that started before or during Jan 2023 AND either ended after Jan 1 2023 or are still ongoing. Use their 2023 profit data (Jan-Dec 2023) to calculate ARPU.","{
+  ""Annual"": 1346.93,
+  ""Monthly"": 1709.18,
+  ""Total"": 1610.39
+}"
+step2_evaluation.csv,"Show ARPU breakdown by initial plan type (Basic, Pro, Enterprise) for customers who were active in January 2023. Use their 2023 profit to calculate average revenue per user by original plan choice.","{
+  ""Basic"": 1167.33,
+  ""Pro"": 2212.14,
+  ""Enterprise"": 3514.95
+}"
+step2_evaluation.csv,Calculate ARPU by industry segment for customers who were active in January 2023. Use 2023 profit data to determine average revenue per user by industry.,"{
+  ""Education"": 1685.72,
+  ""Tech"": 1658.75,
+  ""Healthcare"": 1750.67,
+  ""Retail"": 1500.19,
+  ""Other"": 923.82
+}"
+step2_evaluation.csv,What is the ARPU by acquisition channel for customers who were active in January 2023? Calculate using their 2023 profit data.,"{
+  ""Affiliate"": 1411.12,
+  ""Email"": 1405.42,
+  ""Social Media"": 1930.52,
+  ""Content"": 1383.32,
+  ""Paid Search"": 1887.72
+}"
+step2_evaluation.csv,What was the total profit generated in 2023 by customers who were active in January 2023?,22652.7
+step3_evaluation.csv,"Calculate the churn rate for customers who were active in January 2023, broken down by their initial subscription type (Monthly, Annual, and Total combined). Active customers are those who had subscriptions that started before or during Jan 2023 AND either ended after Jan 1 2023 or are still ongoing. Count customers who churned during 2023 (Status='Churned' with EndDate in 2023). If any segment shows 0% churn, assume a 5-year customer lifetime (20% annual churn rate).","{
+  ""Annual"": 0.2778,
+  ""Monthly"": 0.5,
+  ""Total"": 0.4394
+}"
+step3_evaluation.csv,"Show churn rate breakdown by initial plan type (Basic, Pro, Enterprise) for customers who were active in January 2023. Apply 5-year assumption (20% churn) if no actual churns occurred in any segment.","{
+  ""Basic"": 0.4651,
+  ""Pro"": 0.3684,
+  ""Enterprise"": 0.5
+}"
+step3_evaluation.csv,Calculate churn rate by industry segment for customers who were active in January 2023. Use Status='Churned' and EndDate in 2023 to identify churned customers.,"{
+  ""Education"": 0.2857,
+  ""Tech"": 0.4828,
+  ""Healthcare"": 0.3529,
+  ""Retail"": 0.625,
+  ""Other"": 0.4
+}"
+step3_evaluation.csv,What is the churn rate by acquisition channel for customers who were active in January 2023? Count churns during 2023 and apply 5-year assumption if needed.,"{
+  ""Affiliate"": 0.6364,
+  ""Email"": 0.5263,
+  ""Social Media"": 0.4,
+  ""Content"": 0.4444,
+  ""Paid Search"": 0.1667
+}"
+step3_evaluation.csv,"How many customers from the January 2023 active cohort actually churned during 2023? Count customers with Status='Churned' and EndDate between Jan 1-Dec 31, 2023.",29
+step4_evaluation.csv,"Calculate the Customer Lifetime Value (LTV) for customers who were active in January 2023, broken down by their initial subscription type (Monthly, Annual, and Total combined). Active customers are those who had subscriptions that started before or during Jan 2023 AND either ended after Jan 1 2023 or are still ongoing. Use the formula: LTV = (ARPU / Churn Rate) × 75% profit margin. ARPU should be calculated from 2023 profit data, churn rate from 2023 churns (assume 20% if 0% churn).","{
+  ""Annual"": 3636.42,
+  ""Monthly"": 2563.77,
+  ""Total"": 2748.73
+}"
+step4_evaluation.csv,"Show LTV breakdown by initial plan type (Basic, Pro, Enterprise) for customers who were active in January 2023. Use LTV = (ARPU / Churn Rate) × 75% profit margin formula.","{
+  ""Basic"": 1882.39,
+  ""Pro"": 4503.54,
+  ""Enterprise"": 5272.42
+}"
+step4_evaluation.csv,Calculate LTV by industry segment for customers who were active in January 2023. Apply the formula LTV = (ARPU / Churn Rate) × 75% profit margin using industry-specific ARPU and churn rates.,"{
+  ""Education"": 4425.24,
+  ""Tech"": 2576.77,
+  ""Healthcare"": 3720.61,
+  ""Retail"": 1800.23,
+  ""Other"": 1732.16
+}"
+step4_evaluation.csv,What is the LTV by acquisition channel for customers who were active in January 2023? Calculate using the standard SaaS formula: LTV = (ARPU / Churn Rate) × 75% profit margin.,"{
+  ""Affiliate"": 1663.01,
+  ""Email"": 2002.78,
+  ""Social Media"": 3619.72,
+  ""Content"": 2334.59,
+  ""Paid Search"": 8493.04
+}"
+step4_evaluation.csv,What profit margin was used in the LTV calculation and what is the formula?,"Profit Margin: 0.75, Formula: LTV = (ARPU / Churn Rate) × Profit Margin"
+step5_evaluation.csv,"Calculate the LTV to CAC ratio for each acquisition channel for customers who were active in January 2023. Active customers are those who had subscriptions that started before or during Jan 2023 AND either ended after Jan 1 2023 or are still ongoing. Use LTV = (ARPU / Churn Rate) × 75% profit margin formula with 2023 data. For CAC, use industry standard estimates: Paid Search $800, Social Media $600, Email $250, Affiliate $500, Content $400.","{
+  ""Affiliate"": 3.33,
+  ""Email"": 8.01,
+  ""Social Media"": 6.03,
+  ""Content"": 5.84,
+  ""Paid Search"": 10.62
+}"
+step5_evaluation.csv,Show the Customer Acquisition Cost (CAC) for each acquisition channel for customers who were active in January 2023. Use industry standard estimates.,"{
+  ""Affiliate"": 500,
+  ""Email"": 250,
+  ""Social Media"": 600,
+  ""Content"": 400,
+  ""Paid Search"": 800
+}"
+step5_evaluation.csv,"Provide a complete profitability analysis comparing LTV and CAC by acquisition channel for customers who were active in January 2023. Include LTV values, CAC costs, LTV/CAC ratios, customer counts, and profitability categorization (Excellent 3x+, Good 2x+, Break-even 1x+, Unprofitable <1x).","{
+  ""Affiliate"": {
+    ""ltv"": 1663.01,
+    ""cac"": 500,
+    ""ltv_cac_ratio"": 3.33,
+    ""customer_count"": 11,
+    ""profitability_status"": ""Excellent (LTV/CAC >= 3x)""
+  },
+  ""Email"": {
+    ""ltv"": 2002.78,
+    ""cac"": 250,
+    ""ltv_cac_ratio"": 8.01,
+    ""customer_count"": 19,
+    ""profitability_status"": ""Excellent (LTV/CAC >= 3x)""
+  },
+  ""Social Media"": {
+    ""ltv"": 3619.72,
+    ""cac"": 600,
+    ""ltv_cac_ratio"": 6.03,
+    ""customer_count"": 15,
+    ""profitability_status"": ""Excellent (LTV/CAC >= 3x)""
+  },
+  ""Content"": {
+    ""ltv"": 2334.59,
+    ""cac"": 400,
+    ""ltv_cac_ratio"": 5.84,
+    ""customer_count"": 9,
+    ""profitability_status"": ""Excellent (LTV/CAC >= 3x)""
+  },
+  ""Paid Search"": {
+    ""ltv"": 8493.04,
+    ""cac"": 800,
+    ""ltv_cac_ratio"": 10.62,
+    ""customer_count"": 12,
+    ""profitability_status"": ""Excellent (LTV/CAC >= 3x)""
+  }
+}"
+step5_evaluation.csv,Which acquisition channels have an LTV/CAC ratio above 3x (excellent profitability) for customers who were active in January 2023?,"{
+  ""Affiliate"": 3.33,
+  ""Email"": 8.01,
+  ""Social Media"": 6.03,
+  ""Content"": 5.84,
+  ""Paid Search"": 10.62
+}"
+step5_evaluation.csv,What is the interpretation guide for LTV/CAC ratios and what thresholds should be used?,"{
+  ""excellent_threshold"": ""LTV/CAC >= 3x"",
+  ""good_threshold"": ""LTV/CAC >= 2x"",
+  ""breakeven_threshold"": ""LTV/CAC >= 1x"",
+  ""interpretation"": ""Higher LTV/CAC ratios indicate more profitable acquisition channels""
+}"

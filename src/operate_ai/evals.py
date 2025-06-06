@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar
+from uuid import uuid4
 
 from loguru import logger
 from pydantic_ai import Agent
@@ -11,6 +12,7 @@ from operate_ai.cfo_graph import TaskResult, thread
 OutputsT = TypeVar("OutputsT")
 PrevQueriesT = TypeVar("PrevQueriesT")
 
+DELTA = 0.025
 
 @dataclass
 class PrevQuery[PrevQueriesT]:
@@ -37,21 +39,28 @@ class Query[OutputsT]:
 @dataclass
 class EqEvaluator(Evaluator[Query[OutputsT], OutputsT]):
     async def evaluate(self, ctx: EvaluatorContext[Query[OutputsT], OutputsT]) -> bool:
+        if isinstance(ctx.output, (int, float)) and isinstance(ctx.expected_output, (int, float)):
+            output = round(ctx.output, 2) if isinstance(ctx.output, float) else ctx.output
+            expected = (
+                round(ctx.expected_output, 2) if isinstance(ctx.expected_output, float) else ctx.expected_output
+            )
+            return abs(output - expected) < DELTA
         return ctx.output == ctx.expected_output
 
 
 async def eval_task[OutputT](
     query: Query[OutputT],
+    name: str | None = None,
     use_excel_tools: bool = False,
-    get_prev_state_if_none: bool = False,
     use_thinking: bool = False,
     use_memory: bool = False,
+    limit: int = 10,
 ) -> OutputT:
-    thread_dir = Path("/Users/hamza/dev/operate-ai/workspaces/1/threads/1")
+    thread_dir = Path(f"/Users/hamza/dev/operate-ai/workspaces/1/threads/{name or uuid4()}")
     output = None
-    limit = 10
     user_prompt = query.prompt
-    while not isinstance(output, TaskResult) and limit > 0:
+    step = 0
+    while not isinstance(output, TaskResult) and step < limit:
         output = await thread(
             thread_dir=thread_dir,
             user_prompt=user_prompt,
@@ -59,11 +68,10 @@ async def eval_task[OutputT](
             use_excel_tools=use_excel_tools,
             use_thinking=use_thinking,
             use_memory=use_memory,
-            get_prev_state_if_none=get_prev_state_if_none,
         )
         logger.info(f"Output: {output}")
         user_prompt = "go on"
-        limit -= 1
+        step += 1
     if output is None:
         raise ValueError("Output is None")
     typer_agent = Agent(

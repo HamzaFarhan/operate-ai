@@ -1,31 +1,13 @@
+from functools import partial
+
 import logfire
 import pandas as pd
 from pydantic import BaseModel, Field
 from pydantic_evals import Case, Dataset
 
-from operate_ai.evals import EqEvaluator, Query, eval_task
+from operate_ai.evals import DELTA, EqEvaluator, Query, eval_task
 
 logfire.configure()
-
-
-class RevenueName(BaseModel):
-    revenue: float = Field(description="Revenue retention rate or ratio.")
-
-
-class CACValue(BaseModel):
-    cac: float = Field(description="Customer Acquisition Cost value.")
-
-
-class ChurnRate(BaseModel):
-    churn_rate: float = Field(description="Customer churn rate as a decimal.")
-
-
-class CustomerCount(BaseModel):
-    count: int = Field(description="Number of unique customers.")
-
-
-class ContributionMargin(BaseModel):
-    margin: float = Field(description="Contribution margin value.")
 
 
 class CACComparison(BaseModel):
@@ -34,13 +16,15 @@ class CACComparison(BaseModel):
     lowest_cac_channel: str = Field(description="Channel with lowest CAC.")
     lowest_cac_value: float = Field(description="Lowest CAC value.")
 
-
-class ARPU(BaseModel):
-    arpu: float = Field(description="Average Revenue Per User.")
-
-
-class MRR(BaseModel):
-    mrr: float = Field(description="Monthly Recurring Revenue.")
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, CACComparison):
+            return NotImplemented
+        return (
+            self.highest_cac_channel == other.highest_cac_channel
+            and abs(round(self.highest_cac_value, 2) - round(other.highest_cac_value, 2)) < DELTA
+            and self.lowest_cac_channel == other.lowest_cac_channel
+            and abs(round(self.lowest_cac_value, 2) - round(other.lowest_cac_value, 2)) < DELTA
+        )
 
 
 type ResultT = float | int | CACComparison
@@ -208,13 +192,11 @@ def generate_csv():
 
 
 def evaluate():
-    report = arman_dataset.evaluate_sync(task=eval_task, name="arman_evals", max_concurrency=1)
+    thinking = False
+    name = f"arman_evals_thinking_{thinking}"
+    report = arman_dataset.evaluate_sync(task=partial(eval_task, use_thinking=thinking), name=name)
     report.print(include_output=True, include_expected_output=True, include_input=True, include_averages=True)
 
 
 if __name__ == "__main__":
-    # Generate CSV
-    generate_csv()
-
-    # Run evaluation (can be commented out)
-    # evaluate()
+    evaluate()

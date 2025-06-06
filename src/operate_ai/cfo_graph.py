@@ -293,16 +293,22 @@ class RunSQLNode(BaseNode[GraphState, GraphDeps, RunSQLResult]):
 
 def calculate_sum(values: list[float]) -> float:
     """Calculate the sum of a list of values."""
+    if len(values) < 2:
+        raise ModelRetry("Need at least 2 values to calculate sum")
     return sum(values)
 
 
 def calculate_difference(num1: float, num2: float) -> float:
     """Calculate the difference between two numbers by subtracting `num1` from `num2`"""
+    if num1 == num2:
+        raise ModelRetry("The two numbers are the same. Please try again.")
     return num2 - num1
 
 
 def calculate_mean(values: list[float]) -> float:
     """Calculate the mean of a list of values."""
+    if len(values) < 2:
+        raise ModelRetry("Need at least 2 values to calculate mean")
     return sum(values) / len(values)
 
 
@@ -493,13 +499,14 @@ def create_agent(
     )
     excel_server = MCPServerStdio(command="uvx", args=[str(MODULE_DIR / "../../../excel-mcp-server"), "stdio"])
     mcp_servers: list[MCPServerStdio] = []
+    prompts = [Path(MODULE_DIR / "prompts/cfo.md").read_text()]
     if use_thinking:
         mcp_servers.append(thinking_server)
     if use_memory:
         mcp_servers.append(memory_server)
+        prompts.append(Path(MODULE_DIR / "prompts/memory.md").read_text())
     if use_excel_tools:
         mcp_servers.append(excel_server)
-    prompts = [Path(MODULE_DIR / "prompts/cfo.md").read_text(), Path(MODULE_DIR / "prompts/memory.md").read_text()]
     output_types: list[type] = [TaskResult, RunSQL]
     if use_excel_tools:
         output_types.append(WriteDataToExcelResult)
@@ -625,7 +632,7 @@ async def load_prev_state(
         Path(prev_state_path) if prev_state_path else get_prev_state_path(thread_dir) if get_if_none else None
     )
     logger.info(f"Previous state path: {prev_state_path}")
-    if prev_state_path:
+    if prev_state_path and prev_state_path.exists():
         prev_persistence = FileStatePersistence(json_file=prev_state_path.expanduser().resolve())
         prev_persistence.set_graph_types(graph=graph)
         return await load_state(persistence=prev_persistence)
@@ -657,10 +664,10 @@ async def thread(
     persistence = FileStatePersistence(json_file=persistence_path.expanduser().resolve())
     persistence.set_graph_types(graph=graph)
     model = FallbackModel(
+        "openai:gpt-4.1",
         "anthropic:claude-4-sonnet-20250514",
         "google-gla:gemini-2.5-flash-preview-05-20",
         "openai:gpt-4.1-mini",
-        "openai:gpt-4.1",
     )
     agent_deps = AgentDeps(
         data_dir=str(data_dir),

@@ -304,7 +304,7 @@ def generate_csv():
 def evaluate():
     """Run the evaluation (can be commented out)"""
     dataset = create_step3_dataset()
-    report = dataset.evaluate_sync(task=eval_task, name="step3_evals", max_concurrency=1)
+    report = dataset.evaluate_sync(task=eval_task, name="step3_evals")
     report.print(include_output=True, include_expected_output=True, include_input=True, include_averages=True)
 
 

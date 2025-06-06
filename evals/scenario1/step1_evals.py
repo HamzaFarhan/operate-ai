@@ -254,7 +254,7 @@ def generate_csv():
 
 def evaluate():
     dataset = create_step1_dataset()
-    report = dataset.evaluate_sync(task=eval_task, name="step1_evals", max_concurrency=1)
+    report = dataset.evaluate_sync(task=eval_task, name="step1_evals")
     report.print(include_output=True, include_expected_output=True, include_input=True, include_averages=True)
 
 

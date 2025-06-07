@@ -12,7 +12,7 @@ import pandas as pd
 from pydantic import BaseModel, Field
 from pydantic_evals import Case, Dataset
 
-from operate_ai.evals import EqEvaluator, PrevQuery, Query, eval_task
+from operate_ai.evals import EqEvaluator, Query, eval_task
 
 logfire.configure()
 
@@ -139,11 +139,6 @@ def create_step1_dataset():
     industry_data = ground_truth["by_industry"]
     acquisition_data = ground_truth["by_acquisition_channel"]
 
-    prev_query = PrevQuery(
-        query="How many customers were active in January 2023?",
-        result=ground_truth["total_active_customers"],
-    )
-
     dataset = Dataset[Query[ResultT], ResultT](
         cases=[
             Case(
@@ -152,7 +147,7 @@ def create_step1_dataset():
                     query=QUERIES["total_count"],
                     output_type=int,
                 ),
-                expected_output=ground_truth["total_active_customers"],
+                expected_output=int(ground_truth["total_active_customers"]),
             ),
             Case(
                 name="step1_2",
@@ -161,8 +156,8 @@ def create_step1_dataset():
                     output_type=CustomersPerSubscriptionType,
                 ),
                 expected_output=CustomersPerSubscriptionType(
-                    monthly=subscription_type_data.get("Monthly", 0),
-                    annual=subscription_type_data.get("Annual", 0),
+                    monthly=int(subscription_type_data.get("Monthly", 0)),
+                    annual=int(subscription_type_data.get("Annual", 0)),
                 ),
             ),
             Case(
@@ -172,9 +167,9 @@ def create_step1_dataset():
                     output_type=CustomersPerPlanType,
                 ),
                 expected_output=CustomersPerPlanType(
-                    basic=plan_type_data.get("Basic", 0),
-                    pro=plan_type_data.get("Pro", 0),
-                    enterprise=plan_type_data.get("Enterprise", 0),
+                    basic=int(plan_type_data.get("Basic", 0)),
+                    pro=int(plan_type_data.get("Pro", 0)),
+                    enterprise=int(plan_type_data.get("Enterprise", 0)),
                 ),
             ),
             Case(

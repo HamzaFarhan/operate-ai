@@ -5,34 +5,24 @@ from uuid import uuid4
 
 from loguru import logger
 from pydantic_ai import Agent
+from pydantic_ai.models import KnownModelName
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 from operate_ai.cfo_graph import TaskResult, thread
 
 OutputsT = TypeVar("OutputsT")
-PrevQueriesT = TypeVar("PrevQueriesT")
-
-DELTA = 0.025
-
-@dataclass
-class PrevQuery[PrevQueriesT]:
-    query: str
-    result: PrevQueriesT
+DELTA = 0.05
 
 
 @dataclass
 class Query[OutputsT]:
     query: str
     output_type: type[OutputsT]
-    # prev_queries: list[PrevQuery[PrevQueriesT]] = field(default_factory=list)
 
     @property
     def prompt(self) -> str:
         res = f"Task: {self.query}"
-        # if self.prev_queries:
-        #     res += "\n\nPrevious Queries:\n"
-        #     for prev_query in self.prev_queries:
-        #         res += f"Task: {prev_query.query}\nResult: {prev_query.result}\n"
         return res
 
 
@@ -50,13 +40,17 @@ class EqEvaluator(Evaluator[Query[OutputsT], OutputsT]):
 
 async def eval_task[OutputT](
     query: Query[OutputT],
+    workspace_dir: Path | str,
     name: str | None = None,
+    model: KnownModelName | FallbackModel | None = None,
     use_excel_tools: bool = False,
     use_thinking: bool = False,
     use_memory: bool = False,
     limit: int = 10,
 ) -> OutputT:
-    thread_dir = Path(f"/Users/hamza/dev/operate-ai/workspaces/1/threads/{name or uuid4()}")
+    # Ensure data directory exists and has the right contents
+    workspace_dir = Path(workspace_dir)
+    thread_dir = workspace_dir / "threads" / (name or str(uuid4()))
     output = None
     user_prompt = query.prompt
     step = 0
@@ -64,6 +58,7 @@ async def eval_task[OutputT](
         output = await thread(
             thread_dir=thread_dir,
             user_prompt=user_prompt,
+            model=model,
             do_user_interaction=False,
             use_excel_tools=use_excel_tools,
             use_thinking=use_thinking,

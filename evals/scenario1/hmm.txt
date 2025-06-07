@@ -1,0 +1,13 @@
+			
+Query	Expected Response	Details	
+What is the January 2023 annual subscription type by initial subscription 12 month revenue retention	141%	$2880 as 12 month revenue divided by $2040 as 0 month revenue	
+What is the December 2023 annual subscription type by initial subscription 6 month revenue retention	0%	$0 as 6 month revenue divided by $600 as 0 month revenue	
+What is the January 2023 annual subscription type 12 month revenue retention	155%	$4080 as 12 month revenue divided by $2640 as 0 month revenue	
+What is Content CAC from July 2024 to Dec 2024 	US$2,921 	$11683 Spend, 4 acquistions	
+What is monthly plan & pro subscription type churn rate from Jan 2023 to Dec 2023	36%	4 churned subscribers during period divided by 11 active subscribers on Jan 2023	
+How many unique customers ordered a monthly basic plan from Dec 2023 to Feb 2024	35	Unique customers that ordered during dec 23 to Feb 24	
+What is 2024 Contribution Margin	-US$1,441	Sum of 2024 profit minus sum of 2024 marketing expenses	
+Which marketing acquisition channel has the highest CAC and which has the lowest during the period Feb 2024 to May 2024	Affiliate CAC at $4,838 and Email CAC at $571	"Affiliate: $4838 Spend, 1 acquistion
+Email: $2283 Spend, 4 acquisitions"	
+What is ARPU for Tech customers in Oct 2024	US$252.86	28 customers, $7,080 Revenue	
+What is MRR as of Dec 2024	US$13,770	113 customers with ARPU of $121.86	

@@ -1,11 +1,11 @@
 query,expected_output
-What is the January 2023 annual subscription type by initial subscription 12 month revenue retention? Calculate as 12 month revenue divided by initial revenue.,1.41
-What is the December 2023 annual subscription type by initial subscription 6 month revenue retention? Calculate as 6 month revenue divided by initial revenue.,0.0
-What is the January 2023 annual subscription type 12 month revenue retention? Calculate as 12 month revenue divided by initial revenue.,1.55
-What is Content CAC from July 2024 to Dec 2024? Calculate as total spend divided by acquisitions.,2921.0
-What is monthly plan & pro subscription type churn rate from Jan 2023 to Dec 2023? Calculate as churned subscribers divided by active subscribers on Jan 2023.,0.36
-How many unique customers ordered a monthly basic plan from Dec 2023 to Feb 2024?,35
-What is 2024 Contribution Margin? Calculate as sum of 2024 profit minus sum of 2024 marketing expenses.,-1441.29
-Which marketing acquisition channel has the highest CAC and which has the lowest during the period Feb 2024 to May 2024?,highest_cac_channel='Affiliate' highest_cac_value=4838.0 lowest_cac_channel='Email' lowest_cac_value=571.0
-What is ARPU for Tech customers in Oct 2024? Calculate as total revenue divided by number of customers.,252.857143
-What is MRR as of Dec 2024? Calculate based on customer count and ARPU.,13770.0
+What is the January 2023 annual subscription type by initial subscription 12 month revenue retention? Calculate as 12 month revenue divided by initial revenue.,1.0
+What is the December 2023 annual subscription type by initial subscription 6 month revenue retention? Calculate as 6 month revenue divided by initial revenue.,1.0
+What is the January 2023 annual subscription type 12 month revenue retention? Calculate as 12 month revenue divided by initial revenue.,1.0
+What is Content CAC from July 2024 to Dec 2024? Calculate as total spend divided by acquisitions.,1615.0
+What is monthly plan & pro subscription type churn rate from Jan 2023 to Dec 2023? Calculate as churned subscribers divided by active subscribers on Jan 2023.,0.44
+How many unique customers ordered a monthly basic plan from Dec 2023 to Feb 2024?,31
+What is 2024 Contribution Margin? Calculate as sum of 2024 profit minus sum of 2024 marketing expenses.,-6736.53
+Which marketing acquisition channel has the highest CAC and which has the lowest during the period Feb 2024 to May 2024?,highest_cac_channel='Paid Search' highest_cac_value=13217.0 lowest_cac_channel='Email' lowest_cac_value=820.0
+What is ARPU for Tech customers in Oct 2024? Calculate as total revenue divided by number of customers.,368.181818
+What is MRR as of Dec 2024? Calculate based on customer count and ARPU.,24990.0

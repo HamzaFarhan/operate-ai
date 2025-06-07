@@ -25,6 +25,7 @@ from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from pydantic_graph.persistence.file import FileStatePersistence
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 load_dotenv()
 
@@ -533,6 +534,16 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
     docstring_notes = True
     user_prompt: str
 
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=5))
+    async def _run_agent_with_retry(self, ctx: GraphRunContext[GraphState, GraphDeps]):
+        async with ctx.deps.agent.run_mcp_servers():
+            return await ctx.deps.agent.run(
+                user_prompt=self.user_prompt,
+                deps=ctx.deps.agent_deps,
+                message_history=ctx.state.message_history,
+                model_settings={"temperature": 0.0},
+            )
+
     async def run(
         self, ctx: GraphRunContext[GraphState, GraphDeps]
     ) -> (
@@ -547,13 +558,13 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
                 {"role": "user", "content": self.user_prompt, "state_path": ctx.deps.agent_deps.state_path}
             )
         error_result = End(data="Ran into an error. Please try again.")
-        async with ctx.deps.agent.run_mcp_servers():
-            res = await ctx.deps.agent.run(
-                user_prompt=self.user_prompt,
-                deps=ctx.deps.agent_deps,
-                message_history=ctx.state.message_history,
-                model_settings={"temperature": 0.0},
-            )
+
+        try:
+            res = await self._run_agent_with_retry(ctx)
+        except Exception:
+            logger.exception("Error running agent after retries")
+            return error_result
+
         try:
             ctx.state.message_history += res.new_messages()
             if isinstance(res.output, RunSQL):
@@ -575,7 +586,7 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
             else:
                 return TaskResultNode(task_result=res.output)
         except Exception:
-            logger.exception("Error running agent")
+            logger.exception("Error processing agent result")
             return error_result
 
 
@@ -642,6 +653,7 @@ async def load_prev_state(
 async def thread(
     thread_dir: Path | str,
     user_prompt: str,
+    model: KnownModelName | FallbackModel | None = None,
     do_user_interaction: bool = True,
     use_excel_tools: bool = True,
     use_thinking: bool = True,
@@ -663,7 +675,7 @@ async def thread(
     persistence_path = states_dir / f"{datetime.now().strftime('%d-%m-%Y_%H-%M-%S')}.json"
     persistence = FileStatePersistence(json_file=persistence_path.expanduser().resolve())
     persistence.set_graph_types(graph=graph)
-    model = FallbackModel(
+    model = model or FallbackModel(
         "openai:gpt-4.1",
         "anthropic:claude-4-sonnet-20250514",
         "google-gla:gemini-2.5-flash-preview-05-20",

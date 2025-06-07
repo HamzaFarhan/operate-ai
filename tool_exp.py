@@ -1,10 +1,12 @@
-import asyncio
 import inspect
 import json
+import os
 from collections.abc import Callable
 from typing import Any, Union, get_args, get_origin
 
 from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 from openai import OpenAI
 from openai.types.responses import FunctionToolParam
 from pydantic import BaseModel, TypeAdapter
@@ -33,6 +35,7 @@ def _remove_titles_recursively(obj: dict[str, Any] | list[Any] | Any) -> None:
 
 def add(a: int, b: Number) -> int:
     """Adds two numbers together"""
+    print(f"ADDING {a} and {b.number}")
     return Number(number=a + b.number).number
 
 
@@ -123,6 +126,7 @@ res = client.responses.create(
     tools=[tool.schema() for tool in tools.values()],
 )
 
+client.responses.create(
 
 async def main():
     for tool_call in res.output:
@@ -138,5 +142,11 @@ async def main():
             print(result)
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+response = gemini_client.models.generate_content(
+    model="gemini-2.0-flash-001",
+    contents="what is 6+3? use the add function",
+    config=types.GenerateContentConfig(tools=[add]),
+)
+
+response.automatic_function_calling_history

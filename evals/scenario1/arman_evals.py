@@ -341,7 +341,7 @@ def create_arman_dataset():
                 ),
                 expected_output=ground_truth["mrr_dec_2024"],
             ),
-        ][4:5],
+        ],
         evaluators=[EqEvaluator[ResultT]()],
     )
 
@@ -408,13 +408,13 @@ def generate_csv():
 
 
 def evaluate(workspace_name: str = "1"):
-    thinking = False
+    thinking = True
     name = f"arman_evals_thinking_{thinking}"
     model: KnownModelName | FallbackModel = FallbackModel(
-        "anthropic:claude-4-sonnet-20250514",
         "google-gla:gemini-2.5-flash-preview-05-20",
         "openai:gpt-4.1",
-        "openai:gpt-4.1-mini",
+        "openai:gpt-4.1-nano",
+        "anthropic:claude-4-sonnet-20250514",
     )
     dataset = create_arman_dataset()
     workspace_dir = MAIN_DIR / f"workspaces/{workspace_name}"

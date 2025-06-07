@@ -1,6 +1,6 @@
 ---
 description: 
-globs: 
+globs: cfo.md
 alwaysApply: false
 ---
 # CFO Prompt Genericity Checker

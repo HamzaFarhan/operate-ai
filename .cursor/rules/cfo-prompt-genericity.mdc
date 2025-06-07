@@ -1,0 +1,135 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# CFO Prompt Genericity Checker
+
+This rule ensures the [CFO prompt](mdc:src/operate_ai/prompts/cfo.md) remains generic and adaptable to different data scenarios, rather than being hardcoded to specific table structures or business models.
+
+## Generic Quality Requirements
+
+### ❌ Avoid These (Scenario-Specific Elements)
+- **Hardcoded table names**: `customers`, `subscriptions`, `orders`, `marketing_spend`
+- **Hardcoded column names**: `CustomerID`, `StartDate`, `EndDate`, `Amount`
+- **Specific file names**: `customers.csv`, `operateai_scenario1_data.py`
+- **Business model assumptions**: Only subscription models, only SaaS metrics
+- **Schema assumptions**: Assuming specific table relationships exist
+
+### ✅ Maintain These (Generic Elements)
+- **Placeholder syntax**: `{customer_status_table}`, `{transaction_table}`, `{customer_id_column}`
+- **Business model adaptability**: Sections for subscription, e-commerce, marketplace, B2B
+- **Data discovery emphasis**: "Start with `list_csv_files`", "Examine data structures"
+- **Generic SQL patterns**: Adaptable templates with placeholders
+- **Flexible workflows**: Business model discovery, adaptive analysis approaches
+- **Universal principles**: Data hierarchy, validation processes, accuracy standards
+
+## Consistency Requirements
+
+The prompt must maintain **internal consistency** across all sections. Different parts of the prompt should use the same naming conventions and patterns.
+
+### Table Naming Consistency
+- **Use established patterns**: Follow existing `{table_or_table}` pattern (e.g., `{subscription_or_contract_table}`)
+- **Don't mix naming schemes**: If one section uses `{subscription_or_contract_table}`, don't introduce `{customer_status_table}` elsewhere
+- **Prose should match SQL**: If SQL uses `{subscription_or_contract_table}`, prose should refer to "subscription/contract tables"
+
+### Language Consistency Patterns
+- **SQL placeholders**: `{subscription_or_contract_table}`, `{transaction_table}`, `{customer_id_column}`
+- **Prose references**: "subscription/contract table", "transaction table", "customer status/contract data"
+- **Workflow descriptions**: "identify subscription/contract and transaction tables"
+
+### Consistency Validation Checklist
+- [ ] All table references use the same placeholder pattern throughout?
+- [ ] Prose descriptions match SQL placeholder naming?
+- [ ] New sections follow established naming conventions?
+- [ ] No mixing of different table naming schemes (e.g., `customer_status_table` vs `subscription_or_contract_table`)?
+- [ ] Workflow descriptions align with SQL patterns?
+
+### Common Consistency Violations
+- ❌ **Mixed table naming**: Using both `{customer_status_table}` and `{subscription_or_contract_table}` for the same concept
+- ❌ **Prose mismatch**: SQL says `{subscription_or_contract_table}` but prose says "customer status table"
+- ❌ **Workflow inconsistency**: Workflow says "identify customer status tables" but SQL uses `{subscription_or_contract_table}`
+- ✅ **Consistent patterns**: All references to customer lifecycle data use `{subscription_or_contract_table}` pattern
+- ✅ **Aligned language**: Prose, SQL, and workflows all use matching terminology
+
+## Key Checkpoints When Updating the Prompt
+
+### 1. Data Structure References
+- [ ] Are table/column names using placeholders `{table_name}` instead of hardcoded names?
+- [ ] Do SQL examples use generic patterns that can be adapted?
+- [ ] Is there guidance to examine actual data structure first?
+
+### 2. Business Model Flexibility
+- [ ] Does the prompt support multiple business models (subscription, e-commerce, marketplace)?
+- [ ] Are metric definitions adaptable to different business types?
+- [ ] Is there guidance for discovering business model from data?
+
+### 3. Workflow Adaptability
+- [ ] Do workflows start with data discovery rather than assumptions?
+- [ ] Are there alternative approaches for different data structures?
+- [ ] Is there flexibility in tool usage based on available data?
+
+### 4. Examples and Patterns
+- [ ] Are code examples using placeholders for table/column names?
+- [ ] Do calculation patterns work across different schemas?
+- [ ] Are there multiple approaches for different business models?
+
+## Quick Generic Quality Test
+
+When reviewing changes to [src/operate_ai/prompts/cfo.md](mdc:src/operate_ai/prompts/cfo.md):
+
+1. **Search for hardcoded names**: Look for specific table names like `customers`, `orders`, `subscriptions`
+2. **Check SQL examples**: Ensure they use `{placeholder}` syntax
+3. **Verify business model sections**: Confirm multiple business types are supported
+4. **Review workflows**: Ensure they start with data discovery
+5. **Test adaptability**: Ask "Would this work if the data had completely different table/column names?"
+6. **Validate consistency**: Check that all sections use the same placeholder patterns
+7. **Match prose to SQL**: Ensure prose descriptions align with SQL placeholder naming
+
+## Regenericity Refactoring Patterns
+
+If you find scenario-specific elements, use these patterns to make them generic:
+
+### Table Name References
+```diff
+- FROM customers c JOIN orders o ON c.CustomerID = o.CustomerID
++ FROM {customer_table} c JOIN {transaction_table} o ON c.{customer_id_column} = o.{customer_id_column}
+```
+
+### Business Model Assumptions
+```diff
+- Calculate MRR for subscription businesses
++ Calculate MRR/ARR for subscription businesses, or equivalent recurring metrics for other business models
+```
+
+### Hardcoded Workflows
+```diff
+- 1. Query subscriptions table for active customers
++ 1. Identify customer status table and query for active customers
+```
+
+### Schema Assumptions
+```diff
+- Join customers and subscriptions tables
++ Join customer table with their status/contract table (subscription, membership, etc.)
+```
+
+### Consistency Fixes
+```diff
+- Mixed table naming: {customer_status_table} and {subscription_or_contract_table}
++ Consistent naming: {subscription_or_contract_table} throughout
+```
+
+```diff
+- Prose: "identify customer status tables" + SQL: {subscription_or_contract_table}
++ Aligned: "identify subscription/contract tables" + SQL: {subscription_or_contract_table}
+```
+
+## Maintenance Schedule
+
+- **Before major prompt updates**: Run through this checklist
+- **After adding new examples**: Verify they use generic patterns
+- **When adding new business logic**: Ensure it's adaptable to multiple scenarios
+- **During code reviews**: Check for creeping scenario-specificity
+
+The goal is to keep the prompt as a **universal financial analysis framework** that can adapt to any data structure or business model, while maintaining the rigorous accuracy and methodology standards.

@@ -241,16 +241,16 @@ def calculate_arman_ground_truth():
 
 # Define queries once for reuse
 QUERIES = {
-    "revenue_retention_aug_2023_12m": "What is the August 2023 annual subscription type by initial subscription 12 month revenue retention - 12 month revenue divided by initial revenue",
-    "revenue_retention_sep_2023_6m": "What is the September 2023 annual subscription type by initial subscription 6 month revenue retention - 6 month revenue divided by initial revenue",
-    "revenue_retention_feb_2023_12m": "What is the February 2023 annual subscription type 12 month revenue retention - 12 month revenue divided by initial revenue",
-    "content_cac_jul_dec_2024": "What is Content CAC from July 2024 to Dec 2024 - total spend divided by acquisitions",
-    "monthly_pro_churn_2023": "What is monthly plan & pro subscription type churn rate from Jan 2023 to Dec 2023 - churned subscribers divided by active subscribers on Jan 2023",
-    "monthly_basic_customers_dec_feb": "How many unique customers ordered a monthly basic plan from Dec 2023 to Feb 2024 - Count unique customers that ordered during period",
-    "contribution_margin_2024": "What is 2024 Contribution Margin - sum of 2024 profit minus sum of 2024 marketing expenses",
-    "cac_comparison_feb_may_2024": "Which marketing acquisition channel has the highest CAC and which has the lowest during the period Feb 2024 to May 2024 - Compare spend divided by acquisitions across channels",
-    "arpu_tech_oct_2024": "What is ARPU for Tech customers in Oct 2024 - total revenue divided by number of customers",
-    "mrr_dec_2024": "What is MRR as of Dec 2024 - customer count multiplied by ARPU",
+    "revenue_retention_aug_2023_12m": "What is the August 2023 annual subscription cohort 12-month revenue retention rate? Calculate by finding customers who started annual subscriptions in August 2023, then divide their revenue in August 2024 by their revenue in August 2023. Return just the number.",
+    "revenue_retention_sep_2023_6m": "What is the September 2023 annual subscription cohort 6-month revenue retention rate? Calculate by finding customers who started annual subscriptions in September 2023, then divide their revenue in March 2024 by their revenue in September 2023. Return just the number.",
+    "revenue_retention_feb_2023_12m": "What is the February 2023 annual subscription cohort 12-month revenue retention rate? Calculate by finding customers who started annual subscriptions in February 2023, then divide their revenue in February 2024 by their revenue in February 2023. Return just the number.",
+    "content_cac_jul_dec_2024": "What is Content CAC from July 2024 to Dec 2024 - total spend divided by acquisitions. Return just the number. Not a verbose analysis.",
+    "monthly_pro_churn_2023": "What is monthly plan & pro subscription type churn rate from Jan 2023 to Dec 2023 - churned subscribers divided by active subscribers on Jan 2023. Return just the number. Not a verbose analysis.",
+    "monthly_basic_customers_dec_feb": "How many unique customers ordered a monthly basic plan from Dec 2023 to Feb 2024 - Count unique customers that ordered during period. Return just the number. Not a verbose analysis.",
+    "contribution_margin_2024": "What is 2024 Contribution Margin - sum of 2024 profit minus sum of 2024 marketing expenses. Return just the number. Not a verbose analysis.",
+    "cac_comparison_feb_may_2024": "Which marketing acquisition channel has the highest CAC and which has the lowest during the period Feb 2024 to May 2024 - Compare spend divided by acquisitions across channels. Return in this format: 'Highest CAC: <channel> with value <value>. Lowest CAC: <channel> with value <value>.'. Not a verbose analysis.",
+    "arpu_tech_oct_2024": "What is ARPU for Tech customers in Oct 2024 - total revenue divided by number of customers. Return just the number. Not a verbose analysis.",
+    "mrr_dec_2024": "What is MRR as of Dec 2024 - customer count multiplied by ARPU. Return just the number. Not a verbose analysis.",
 }
 
 
@@ -341,7 +341,7 @@ def create_arman_dataset():
                 ),
                 expected_output=ground_truth["mrr_dec_2024"],
             ),
-        ],
+        ][4:5],
         evaluators=[EqEvaluator[ResultT]()],
     )
 

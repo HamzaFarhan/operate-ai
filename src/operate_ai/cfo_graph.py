@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import tempfile
 from collections.abc import Hashable
 from dataclasses import dataclass, field
@@ -35,11 +36,21 @@ SQL_TIMEOUT_SECONDS = 5
 PREVIEW_ROWS = 10
 MAX_RETRIES = 10
 MEMORY_FILE_PATH = os.getenv("MEMORY_FILE_PATH", "memory.json")
+STEP_LIMIT = 100
 MODULE_DIR = Path(__file__).parent
 
 
 def user_message(content: str) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=content)])
+
+
+class Query[OutputT]:
+    def __init__(self, query: Path | str, output_type: type[OutputT] | None = None):
+        self.output_type = output_type
+        if Path(query).exists():
+            self.query = Path(query).read_text()
+        else:
+            self.query = str(query)
 
 
 class Success(BaseModel):
@@ -705,18 +716,87 @@ async def thread(
     return res.output
 
 
-async def run_app():
-    input_prompt = ""
-    while True:
-        # user_prompt = "How many customers in 2022 signed up for a monthly plan?"
-        thread_dir = Path("/Users/hamza/dev/operate-ai/workspaces/1/threads/1")
-        user_prompt = input(f"{input_prompt} > ")
-        if user_prompt.strip().lower() in ["q", ""]:
-            return
-        input_prompt = await thread(
-            thread_dir=thread_dir, user_prompt=user_prompt, do_user_interaction=False, use_excel_tools=False
+async def run_task[OutputT](
+    query: Query[OutputT],
+    workspace_dir: Path | str,
+    name: str | None = None,
+    model: KnownModelName | FallbackModel | None = None,
+    get_user_input: bool = False,
+    do_user_interaction: bool = False,
+    use_excel_tools: bool = False,
+    use_thinking: bool = False,
+    use_memory: bool = False,
+    step_limit: int = STEP_LIMIT,
+) -> OutputT | TaskResult | RunSQLResult | WriteDataToExcelResult | str:
+    workspace_dir = Path(workspace_dir)
+    thread_dir = workspace_dir / "threads" / (name or str(uuid4()))
+    output = None
+    user_prompt = f"Task: {query.query}"
+    step = 0
+    while not isinstance(output, TaskResult) and step < step_limit:
+        output = await thread(
+            thread_dir=thread_dir,
+            user_prompt=user_prompt,
+            model=model,
+            do_user_interaction=do_user_interaction,
+            use_excel_tools=use_excel_tools,
+            use_thinking=use_thinking,
+            use_memory=use_memory,
         )
+        logger.info(f"Output: {output}")
+        if get_user_input:
+            user_prompt = input(f"{output} > ")
+        else:
+            user_prompt = "go on"
+        step += 1
+    if output is None:
+        raise ValueError("Output is None")
+    if query.output_type is None:
+        return output
+    typer_agent = Agent(
+        name="typer",
+        model="openai:gpt-4.1-nano",
+        output_type=query.output_type,
+        instructions=f"Convert the result into this format: {query.output_type}",
+        instrument=True,
+    )
+    user_prompt = (
+        f"Task: {query.query}\n\nResult: {output.model_dump_json() if not isinstance(output, str) else output}"
+    )
+    res = await typer_agent.run(user_prompt=user_prompt)
+    return res.output
+
+
+def setup_workspace(data_dir: Path | str, workspace_dir: Path | str, delete_existing: bool = True):
+    data_dir = Path(data_dir)
+    workspace_dir = Path(workspace_dir)
+    if workspace_dir.exists() and delete_existing:
+        shutil.rmtree(workspace_dir)
+        logger.info(f"Removed {workspace_dir}")
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    workspace_data_dir = workspace_dir / "data"
+    if data_dir.exists():
+        try:
+            shutil.copytree(data_dir, workspace_data_dir, dirs_exist_ok=True)
+            logger.success(f"Copied data from {data_dir} to {workspace_data_dir}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to copy data from {data_dir} to {workspace_data_dir}: {e}") from e
 
 
 if __name__ == "__main__":
-    asyncio.run(run_app())
+    name = "29dddae0-4b05-41f5-9c9f-a3e70ee11bf3"
+    main_dir = MODULE_DIR.parent.parent
+    workspace_dir = main_dir / "workspaces/2"
+    setup_workspace(main_dir / "operateai_scenario1_data", workspace_dir, delete_existing=False)
+    use_thinking = True
+    # query = Query[None](query=Path("/Users/hamza/dev/operate-ai/scenario_queries/1_md_format.txt"))
+    query = Query[None](query=Path("final detailed markdown. you already have everything you need."))
+
+    asyncio.run(
+        run_task(
+            query,
+            name=name,
+            workspace_dir=workspace_dir,
+            use_thinking=use_thinking,
+        )
+    )

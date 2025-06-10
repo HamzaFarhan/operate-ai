@@ -3,23 +3,23 @@ Arman evaluation queries: Complex financial and churn metrics
 Combines ground truth generation with evaluation dataset creation.
 """
 
-import shutil
 from functools import partial
 from pathlib import Path
 
 import logfire
 import pandas as pd
-from loguru import logger
 from pydantic import BaseModel, Field
 from pydantic_ai.models import KnownModelName
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_evals import Case, Dataset
 
+from operate_ai.cfo_graph import setup_workspace
 from operate_ai.evals import DELTA, EqEvaluator, Query, eval_task
 
 logfire.configure()
 
 MAIN_DIR = Path(__file__).parent.parent.parent
+DATA_DIR = MAIN_DIR / "operateai_scenario1_data"
 
 
 class CACComparison(BaseModel):
@@ -44,12 +44,10 @@ type ResultT = float | int | CACComparison
 
 def load_data():
     """Load all necessary datasets"""
-    data_dir = Path("operateai_scenario1_data")
-
-    customers_df = pd.read_csv(data_dir / "customers.csv")
-    subscriptions_df = pd.read_csv(data_dir / "subscriptions.csv")
-    orders_df = pd.read_csv(data_dir / "orders.csv")
-    marketing_spend_df = pd.read_csv(data_dir / "marketing_spend.csv")
+    customers_df = pd.read_csv(DATA_DIR / "customers.csv")
+    subscriptions_df = pd.read_csv(DATA_DIR / "subscriptions.csv")
+    orders_df = pd.read_csv(DATA_DIR / "orders.csv")
+    marketing_spend_df = pd.read_csv(DATA_DIR / "marketing_spend.csv")
 
     # Convert date columns
     customers_df["AcquisitionDate"] = pd.to_datetime(customers_df["AcquisitionDate"])
@@ -254,94 +252,96 @@ QUERIES = {
 }
 
 
-def create_arman_dataset():
+def create_arman_dataset(start_index: int | None = None, end_index: int | None = None):
     """Create the evaluation dataset using ground truth data"""
     # Get ground truth
     ground_truth = calculate_arman_ground_truth()
-
+    cases = [
+        Case(
+            name="arman_1",
+            inputs=Query(
+                query=QUERIES["revenue_retention_aug_2023_12m"],
+                output_type=float,
+            ),
+            expected_output=ground_truth["revenue_retention_aug_2023_12m"],
+        ),
+        Case(
+            name="arman_2",
+            inputs=Query(
+                query=QUERIES["revenue_retention_sep_2023_6m"],
+                output_type=float,
+            ),
+            expected_output=ground_truth["revenue_retention_sep_2023_6m"],
+        ),
+        Case(
+            name="arman_3",
+            inputs=Query(
+                query=QUERIES["revenue_retention_feb_2023_12m"],
+                output_type=float,
+            ),
+            expected_output=ground_truth["revenue_retention_feb_2023_12m"],
+        ),
+        Case(
+            name="arman_4",
+            inputs=Query(
+                query=QUERIES["content_cac_jul_dec_2024"],
+                output_type=float,
+            ),
+            expected_output=ground_truth["content_cac_jul_dec_2024"],
+        ),
+        Case(
+            name="arman_5",
+            inputs=Query(
+                query=QUERIES["monthly_pro_churn_2023"],
+                output_type=float,
+            ),
+            expected_output=ground_truth["monthly_pro_churn_2023"],
+        ),
+        Case(
+            name="arman_6",
+            inputs=Query(
+                query=QUERIES["monthly_basic_customers_dec_feb"],
+                output_type=int,
+            ),
+            expected_output=ground_truth["monthly_basic_customers_dec_feb"],
+        ),
+        Case(
+            name="arman_7",
+            inputs=Query(
+                query=QUERIES["contribution_margin_2024"],
+                output_type=float,
+            ),
+            expected_output=ground_truth["contribution_margin_2024"],
+        ),
+        Case(
+            name="arman_8",
+            inputs=Query(
+                query=QUERIES["cac_comparison_feb_may_2024"],
+                output_type=CACComparison,
+            ),
+            expected_output=ground_truth["cac_comparison_feb_may_2024"],
+        ),
+        Case(
+            name="arman_9",
+            inputs=Query(
+                query=QUERIES["arpu_tech_oct_2024"],
+                output_type=float,
+            ),
+            expected_output=ground_truth["arpu_tech_oct_2024"],
+        ),
+        Case(
+            name="arman_10",
+            inputs=Query(
+                query=QUERIES["mrr_dec_2024"],
+                output_type=float,
+            ),
+            expected_output=ground_truth["mrr_dec_2024"],
+        ),
+    ]
+    start_index = max(0, start_index or 0)
+    end_index = min(len(cases), max(end_index or len(cases), start_index + 1))
     dataset = Dataset[Query[ResultT], ResultT](
-        cases=[
-            Case(
-                name="arman_1",
-                inputs=Query(
-                    query=QUERIES["revenue_retention_aug_2023_12m"],
-                    output_type=float,
-                ),
-                expected_output=ground_truth["revenue_retention_aug_2023_12m"],
-            ),
-            Case(
-                name="arman_2",
-                inputs=Query(
-                    query=QUERIES["revenue_retention_sep_2023_6m"],
-                    output_type=float,
-                ),
-                expected_output=ground_truth["revenue_retention_sep_2023_6m"],
-            ),
-            Case(
-                name="arman_3",
-                inputs=Query(
-                    query=QUERIES["revenue_retention_feb_2023_12m"],
-                    output_type=float,
-                ),
-                expected_output=ground_truth["revenue_retention_feb_2023_12m"],
-            ),
-            Case(
-                name="arman_4",
-                inputs=Query(
-                    query=QUERIES["content_cac_jul_dec_2024"],
-                    output_type=float,
-                ),
-                expected_output=ground_truth["content_cac_jul_dec_2024"],
-            ),
-            Case(
-                name="arman_5",
-                inputs=Query(
-                    query=QUERIES["monthly_pro_churn_2023"],
-                    output_type=float,
-                ),
-                expected_output=ground_truth["monthly_pro_churn_2023"],
-            ),
-            Case(
-                name="arman_6",
-                inputs=Query(
-                    query=QUERIES["monthly_basic_customers_dec_feb"],
-                    output_type=int,
-                ),
-                expected_output=ground_truth["monthly_basic_customers_dec_feb"],
-            ),
-            Case(
-                name="arman_7",
-                inputs=Query(
-                    query=QUERIES["contribution_margin_2024"],
-                    output_type=float,
-                ),
-                expected_output=ground_truth["contribution_margin_2024"],
-            ),
-            Case(
-                name="arman_8",
-                inputs=Query(
-                    query=QUERIES["cac_comparison_feb_may_2024"],
-                    output_type=CACComparison,
-                ),
-                expected_output=ground_truth["cac_comparison_feb_may_2024"],
-            ),
-            Case(
-                name="arman_9",
-                inputs=Query(
-                    query=QUERIES["arpu_tech_oct_2024"],
-                    output_type=float,
-                ),
-                expected_output=ground_truth["arpu_tech_oct_2024"],
-            ),
-            Case(
-                name="arman_10",
-                inputs=Query(
-                    query=QUERIES["mrr_dec_2024"],
-                    output_type=float,
-                ),
-                expected_output=ground_truth["mrr_dec_2024"],
-            ),
-        ],
+        cases=cases[start_index:end_index],
         evaluators=[EqEvaluator[ResultT]()],
     )
 
@@ -407,8 +407,8 @@ def generate_csv():
     return df
 
 
-def evaluate(workspace_name: str = "1"):
-    thinking = True
+def evaluate(workspace_name: str = "1", start_index: int | None = None, end_index: int | None = None):
+    thinking = False
     name = f"arman_evals_thinking_{thinking}"
     model: KnownModelName | FallbackModel = FallbackModel(
         "google-gla:gemini-2.5-flash-preview-05-20",
@@ -416,28 +416,9 @@ def evaluate(workspace_name: str = "1"):
         "openai:gpt-4.1-nano",
         "anthropic:claude-4-sonnet-20250514",
     )
-    dataset = create_arman_dataset()
+    dataset = create_arman_dataset(start_index=start_index, end_index=end_index)
     workspace_dir = MAIN_DIR / f"workspaces/{workspace_name}"
-    if workspace_dir.exists():
-        shutil.rmtree(workspace_dir)
-        logger.info(f"Removed {workspace_dir}")
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-    workspace_data_dir = workspace_dir / "data"
-    source_data_dir = MAIN_DIR / "operateai_scenario1_data"
-    logger.info(f"Source data directory: {source_data_dir}")
-    logger.info(f"Workspace data directory: {workspace_data_dir}")
-    if source_data_dir.exists():
-        workspace_data_dir.mkdir(parents=True, exist_ok=True)
-        # Copy contents from source to workspace data dir
-        for item in source_data_dir.iterdir():
-            dest = workspace_data_dir / item.name
-            if item.is_file():
-                shutil.copy2(item, dest)
-            elif item.is_dir():
-                shutil.copytree(item, dest, dirs_exist_ok=True)
-        logger.info(f"Copied data from {source_data_dir} to {workspace_data_dir}")
-    else:
-        logger.warning(f"Source data directory {source_data_dir} does not exist")
+    setup_workspace(data_dir=DATA_DIR, workspace_dir=workspace_dir, delete_existing=True)
 
     report = dataset.evaluate_sync(
         task=partial(eval_task, model=model, use_thinking=thinking, workspace_dir=workspace_dir), name=name
@@ -450,4 +431,4 @@ if __name__ == "__main__":
     # generate_csv()
 
     # Run evaluation
-    evaluate(workspace_name="1")
+    evaluate(workspace_name="1", start_index=0, end_index=None)

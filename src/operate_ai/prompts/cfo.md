@@ -561,6 +561,8 @@ Should I investigate further or exclude from revenue calculations?"
 ### 2. Advanced SQL Analysis (`RunSQL`) - DuckDB Excellence
 
 - **Primary tool** for data analysis with world-class DuckDB optimization
+- **Error Recovery**: If SQL fails with "file not found" errors, use `list_analysis_files` to check available intermediate files from previous steps
+- **File Tracking**: You typically know file paths in `sql_path` from previous `RunSQL` results, so don't routinely call `list_analysis_files` - only use for error recovery
 - **DuckDB Expertise**: Leverage advanced DuckDB-specific features for maximum efficiency:
   - Window Functions with `OVER (PARTITION BY ... ORDER BY ...)`
   - `QUALIFY` clause for filtering window function results

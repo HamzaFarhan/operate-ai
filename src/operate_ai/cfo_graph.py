@@ -48,10 +48,16 @@ def user_message(content: str) -> ModelRequest:
 class Query[OutputT]:
     def __init__(self, query: Path | str, output_type: type[OutputT] | None = None):
         self.output_type = output_type
-        if Path(query).exists():
+        if isinstance(query, Path) and query.exists():
             self.query = Path(query).read_text()
         else:
             self.query = str(query)
+
+    def __str__(self) -> str:
+        return self.query
+
+    def __repr__(self) -> str:
+        return self.query
 
 
 class Success(BaseModel):
@@ -145,6 +151,19 @@ def list_csv_files(ctx: RunContext[AgentDeps]) -> str:
         res += f"First {PREVIEW_ROWS} rows for preview:\n"
         res += json.dumps(preview_csv(df=file, num_rows=PREVIEW_ROWS)) + "\n\n"
     return res.strip() + "\n</available_csv_files>"
+
+
+def list_analysis_files(ctx: RunContext[AgentDeps]) -> str:
+    """
+    Lists all the analysis files created so far.
+    """
+    csv_files = [file.expanduser().resolve() for file in Path(ctx.deps.analysis_dir).glob("*.csv")]
+    res = "\n<available_analysis_files>\n"
+    for file in csv_files:
+        res += str(file) + "\n"
+        res += f"First {PREVIEW_ROWS} rows for preview:\n"
+        res += json.dumps(preview_csv(df=file, num_rows=PREVIEW_ROWS)) + "\n\n"
+    return res.strip() + "\n</available_analysis_files>"
 
 
 def temp_file_path(file_dir: Path | str | None = None) -> Path:
@@ -525,7 +544,7 @@ def create_agent(
         instructions=[*prompts, add_current_time, add_dirs],
         deps_type=AgentDeps,
         retries=MAX_RETRIES,
-        tools=[list_csv_files, calculate_sum, calculate_difference, calculate_mean],
+        tools=[list_csv_files, list_analysis_files, calculate_sum, calculate_difference, calculate_mean],
         mcp_servers=mcp_servers,
         output_type=output_types,
         instrument=True,
@@ -763,7 +782,7 @@ async def run_task[OutputT](
     return res.output
 
 
-def setup_workspace(data_dir: Path | str, workspace_dir: Path | str, delete_existing: bool = True):
+def setup_workspace(data_dir: Path | str, workspace_dir: Path | str, delete_existing: bool = False):
     data_dir = Path(data_dir)
     workspace_dir = Path(workspace_dir)
     if workspace_dir.exists() and delete_existing:
@@ -780,20 +799,26 @@ def setup_workspace(data_dir: Path | str, workspace_dir: Path | str, delete_exis
 
 
 if __name__ == "__main__":
-    name = "29dddae0-4b05-41f5-9c9f-a3e70ee11bf3"
+    name = None
     main_dir = MODULE_DIR.parent.parent
     workspace_dir = main_dir / "workspaces/2"
-    setup_workspace(main_dir / "operateai_scenario1_data", workspace_dir, delete_existing=False)
+    setup_workspace(main_dir / "operateai_scenario1_data", workspace_dir, delete_existing=True)
     use_thinking = True
-    # query = Query[None](query=Path("/Users/hamza/dev/operate-ai/scenario_queries/1_md_format.txt"))
-    query = Query[None](query=Path("final detailed markdown. you already have everything you need."))
-
+    query = Query[None](query=Path("/Users/hamza/dev/operate-ai/scenario_queries/1_md_format.txt"))
+    # query = Query[None](query=Path("final detailed markdown. you already have everything you need."))
+    model: KnownModelName | FallbackModel = FallbackModel(
+        "anthropic:claude-4-sonnet-20250514",
+        "openai:gpt-4.1",
+        "google-gla:gemini-2.5-flash-preview-05-20",
+        "openai:gpt-4.1-mini",
+    )
     asyncio.run(
         run_task(
             query,
-            name=name,
-            do_user_interaction=False,
             workspace_dir=workspace_dir,
+            name=name,
+            model=model,
+            do_user_interaction=False,
             use_thinking=use_thinking,
         )
     )

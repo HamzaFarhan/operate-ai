@@ -5,16 +5,23 @@ Combines ground truth generation with evaluation dataset creation.
 
 import json
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 
 import logfire
 import pandas as pd
 from pydantic import BaseModel, Field
+from pydantic_ai.models import KnownModelName
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_evals import Case, Dataset
 
+from operate_ai.cfo_graph import setup_workspace
 from operate_ai.evals import EqEvaluator, Query, eval_task
 
 logfire.configure()
+
+MAIN_DIR = Path(__file__).parent.parent.parent
+DATA_DIR = MAIN_DIR / "operateai_scenario1_data"
 
 
 class CustomersPerSubscriptionType(BaseModel):
@@ -128,7 +135,7 @@ QUERIES = {
 }
 
 
-def create_step1_dataset():
+def create_step1_dataset(start_index: int | None = None, end_index: int | None = None):
     """Create the evaluation dataset using ground truth data"""
     # Get ground truth
     ground_truth = get_active_customers_jan_2023()
@@ -139,68 +146,71 @@ def create_step1_dataset():
     industry_data = ground_truth["by_industry"]
     acquisition_data = ground_truth["by_acquisition_channel"]
 
+    cases = [
+        Case(
+            name="step1_1",
+            inputs=Query(
+                query=QUERIES["total_count"],
+                output_type=int,
+            ),
+            expected_output=int(ground_truth["total_active_customers"]),
+        ),
+        Case(
+            name="step1_2",
+            inputs=Query(
+                query=QUERIES["by_subscription_type"],
+                output_type=CustomersPerSubscriptionType,
+            ),
+            expected_output=CustomersPerSubscriptionType(
+                monthly=int(subscription_type_data.get("Monthly", 0)),
+                annual=int(subscription_type_data.get("Annual", 0)),
+            ),
+        ),
+        Case(
+            name="step1_3",
+            inputs=Query(
+                query=QUERIES["by_plan_type"],
+                output_type=CustomersPerPlanType,
+            ),
+            expected_output=CustomersPerPlanType(
+                basic=int(plan_type_data.get("Basic", 0)),
+                pro=int(plan_type_data.get("Pro", 0)),
+                enterprise=int(plan_type_data.get("Enterprise", 0)),
+            ),
+        ),
+        Case(
+            name="step1_4",
+            inputs=Query(
+                query=QUERIES["by_industry"],
+                output_type=CustomersPerIndustry,
+            ),
+            expected_output=CustomersPerIndustry(
+                retail=industry_data.get("Retail", 0),
+                tech=industry_data.get("Tech", 0),
+                healthcare=industry_data.get("Healthcare", 0),
+                education=industry_data.get("Education", 0),
+                other=industry_data.get("Other", 0),
+            ),
+        ),
+        Case(
+            name="step1_5",
+            inputs=Query(
+                query=QUERIES["by_acquisition_channel"],
+                output_type=CustomersPerAcquisitionChannel,
+            ),
+            expected_output=CustomersPerAcquisitionChannel(
+                paid_search=acquisition_data.get("Paid Search", 0),
+                social_media=acquisition_data.get("Social Media", 0),
+                email=acquisition_data.get("Email", 0),
+                affiliate=acquisition_data.get("Affiliate", 0),
+                content=acquisition_data.get("Content", 0),
+            ),
+        ),
+    ]
+    start_index = max(0, start_index or 0)
+    end_index = min(len(cases), max(end_index or len(cases), start_index + 1))
     dataset = Dataset[Query[ResultT], ResultT](
-        cases=[
-            Case(
-                name="step1_1",
-                inputs=Query(
-                    query=QUERIES["total_count"],
-                    output_type=int,
-                ),
-                expected_output=int(ground_truth["total_active_customers"]),
-            ),
-            Case(
-                name="step1_2",
-                inputs=Query(
-                    query=QUERIES["by_subscription_type"],
-                    output_type=CustomersPerSubscriptionType,
-                ),
-                expected_output=CustomersPerSubscriptionType(
-                    monthly=int(subscription_type_data.get("Monthly", 0)),
-                    annual=int(subscription_type_data.get("Annual", 0)),
-                ),
-            ),
-            Case(
-                name="step1_3",
-                inputs=Query(
-                    query=QUERIES["by_plan_type"],
-                    output_type=CustomersPerPlanType,
-                ),
-                expected_output=CustomersPerPlanType(
-                    basic=int(plan_type_data.get("Basic", 0)),
-                    pro=int(plan_type_data.get("Pro", 0)),
-                    enterprise=int(plan_type_data.get("Enterprise", 0)),
-                ),
-            ),
-            Case(
-                name="step1_4",
-                inputs=Query(
-                    query=QUERIES["by_industry"],
-                    output_type=CustomersPerIndustry,
-                ),
-                expected_output=CustomersPerIndustry(
-                    retail=industry_data.get("Retail", 0),
-                    tech=industry_data.get("Tech", 0),
-                    healthcare=industry_data.get("Healthcare", 0),
-                    education=industry_data.get("Education", 0),
-                    other=industry_data.get("Other", 0),
-                ),
-            ),
-            Case(
-                name="step1_5",
-                inputs=Query(
-                    query=QUERIES["by_acquisition_channel"],
-                    output_type=CustomersPerAcquisitionChannel,
-                ),
-                expected_output=CustomersPerAcquisitionChannel(
-                    paid_search=acquisition_data.get("Paid Search", 0),
-                    social_media=acquisition_data.get("Social Media", 0),
-                    email=acquisition_data.get("Email", 0),
-                    affiliate=acquisition_data.get("Affiliate", 0),
-                    content=acquisition_data.get("Content", 0),
-                ),
-            ),
-        ],
+        cases=cases[start_index:end_index],
         evaluators=[EqEvaluator[ResultT]()],
     )
 
@@ -247,15 +257,28 @@ def generate_csv():
     return eval_df
 
 
-def evaluate():
-    dataset = create_step1_dataset()
-    report = dataset.evaluate_sync(task=eval_task, name="step1_evals")
+def evaluate(workspace_name: str = "1", start_index: int | None = None, end_index: int | None = None):
+    thinking = False
+    name = f"step1_evals_thinking_{thinking}"
+    model: KnownModelName | FallbackModel = FallbackModel(
+        "anthropic:claude-4-sonnet-20250514",
+        "openai:gpt-4.1",
+        "google-gla:gemini-2.5-flash-preview-05-20",
+        "openai:gpt-4.1-mini",
+    )
+    dataset = create_step1_dataset(start_index=start_index, end_index=end_index)
+    workspace_dir = MAIN_DIR / f"workspaces/{workspace_name}"
+    setup_workspace(data_dir=DATA_DIR, workspace_dir=workspace_dir, delete_existing=True)
+
+    report = dataset.evaluate_sync(
+        task=partial(eval_task, model=model, use_thinking=thinking, workspace_dir=workspace_dir), name=name
+    )
     report.print(include_output=True, include_expected_output=True, include_input=True, include_averages=True)
 
 
 if __name__ == "__main__":
     # Generate CSV
-    generate_csv()
+    # generate_csv()
 
     # Run evaluation
-    # evaluate()
+    evaluate(workspace_name="1", start_index=4, end_index=5)

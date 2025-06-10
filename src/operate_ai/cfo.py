@@ -78,11 +78,6 @@ class GraphDeps:
     agent_deps: AgentDeps
 
 
-class GraphResult(BaseModel):
-    result_type: Literal["run_sql", "write_sheet", "user_interaction", "task_result", "error"]
-    result: str
-
-
 def extract_csv_paths(sql_query: str) -> list[str]:
     """Extract CSV file paths from SQL query."""
 
@@ -418,19 +413,6 @@ class UserInteraction(BaseModel):
     """
 
     message: str = Field(description="The message to display to the user.")
-
-
-def user_interaction(message: str) -> str:
-    """
-    Interacts with the user. Could be:
-    - A question
-    - A progress update
-    - An assumption made that needs to be validated
-    - A request for clarification
-    - Anything else needed from the user to proceed
-    """
-    res = input(f"{message}> ")
-    return res
 
 
 @dataclass

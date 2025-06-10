@@ -735,7 +735,7 @@ async def run_task[OutputT](
             user_prompt = input(f"{output} > ")
         else:
             user_prompt = (
-                "The user is not available to provide input. "
+                "The user is not available to provide input for this task. "
                 "Please proceed independently by making reasonable assumptions where needed.\n"
                 "Compile all your assumptions, any issues encountered, and your solutions in your final comprehensive response.\n"
                 "Push through to completion even if you think you need user clarification - just document what you assumed and why."

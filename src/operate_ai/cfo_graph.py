@@ -33,7 +33,8 @@ load_dotenv()
 logfire.configure()
 
 SQL_TIMEOUT_SECONDS = 5
-PREVIEW_ROWS = 10
+PREVIEW_ROWS = 2
+RUN_SQL_PREVIEW_ROWS = 2
 MAX_RETRIES = 10
 MEMORY_FILE_PATH = os.getenv("MEMORY_FILE_PATH", "memory.json")
 STEP_LIMIT = 100
@@ -172,7 +173,10 @@ class RunSQL(BaseModel):
             "Example: 'select names from read_csv('workspaces/1/data/orders.csv')'"
         )
     )
-    preview_rows: int = Field(description="Number of rows to preview. 2-5 should be enough for most queries.")
+    preview_rows: int = Field(
+        default=RUN_SQL_PREVIEW_ROWS,
+        description="Number of rows to preview. 2-5 should be enough for most queries.",
+    )
     file_name: str | None = Field(
         description=(
             "Descriptive name of the file based on the query to save the result to in the `analysis_dir`.\n"

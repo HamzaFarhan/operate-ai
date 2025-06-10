@@ -37,6 +37,7 @@ async def eval_task[OutputT](
         workspace_dir=workspace_dir,
         name=name,
         model=model,
+        do_user_interaction=False,
         use_excel_tools=use_excel_tools,
         use_thinking=use_thinking,
         use_memory=use_memory,

@@ -91,11 +91,6 @@ class GraphDeps:
     agent_deps: AgentDeps
 
 
-class GraphResult(BaseModel):
-    result_type: Literal["run_sql", "write_sheet", "user_interaction", "task_result", "error"]
-    result: str
-
-
 def extract_csv_paths(sql_query: str) -> list[str]:
     """Extract CSV file paths from SQL query."""
 
@@ -495,7 +490,6 @@ class TaskResultNode(BaseNode[GraphState, GraphDeps, TaskResult]):
 def create_agent(
     model: Model | KnownModelName,
     workspace_dir: Path | str,
-    do_user_interaction: bool = True,
     use_excel_tools: bool = True,
     use_thinking: bool = True,
     use_memory: bool = True,
@@ -519,12 +513,9 @@ def create_agent(
         prompts.append(Path(MODULE_DIR / "prompts/memory.md").read_text())
     if use_excel_tools:
         mcp_servers.append(excel_server)
-    output_types: list[type] = [TaskResult, RunSQL]
+    output_types: list[type] = [UserInteraction, TaskResult, RunSQL]
     if use_excel_tools:
         output_types.append(WriteDataToExcelResult)
-    if do_user_interaction:
-        prompts.insert(1, Path(MODULE_DIR / "prompts/user_interaction.md").read_text())
-        output_types.append(UserInteraction)
     return Agent(
         model=model,
         instructions=[*prompts, add_current_time, add_dirs],
@@ -665,7 +656,6 @@ async def thread(
     thread_dir: Path | str,
     user_prompt: str,
     model: KnownModelName | FallbackModel | None = None,
-    do_user_interaction: bool = True,
     use_excel_tools: bool = True,
     use_thinking: bool = True,
     use_memory: bool = True,
@@ -701,7 +691,6 @@ async def thread(
     agent = create_agent(
         model=model,
         workspace_dir=thread_dir.parent.parent,
-        do_user_interaction=do_user_interaction,
         use_excel_tools=use_excel_tools,
         use_thinking=use_thinking,
         use_memory=use_memory,
@@ -721,8 +710,7 @@ async def run_task[OutputT](
     workspace_dir: Path | str,
     name: str | None = None,
     model: KnownModelName | FallbackModel | None = None,
-    get_user_input: bool = False,
-    do_user_interaction: bool = False,
+    do_user_interaction: bool = True,
     use_excel_tools: bool = False,
     use_thinking: bool = False,
     use_memory: bool = False,
@@ -738,16 +726,20 @@ async def run_task[OutputT](
             thread_dir=thread_dir,
             user_prompt=user_prompt,
             model=model,
-            do_user_interaction=do_user_interaction,
             use_excel_tools=use_excel_tools,
             use_thinking=use_thinking,
             use_memory=use_memory,
         )
         logger.info(f"Output: {output}")
-        if get_user_input:
+        if do_user_interaction:
             user_prompt = input(f"{output} > ")
         else:
-            user_prompt = "go on"
+            user_prompt = (
+                "The user is not available to provide input. "
+                "Please proceed independently by making reasonable assumptions where needed.\n"
+                "Compile all your assumptions, any issues encountered, and your solutions in your final comprehensive response.\n"
+                "Push through to completion even if you think you need user clarification - just document what you assumed and why."
+            )
         step += 1
     if output is None:
         raise ValueError("Output is None")
@@ -796,6 +788,7 @@ if __name__ == "__main__":
         run_task(
             query,
             name=name,
+            do_user_interaction=False,
             workspace_dir=workspace_dir,
             use_thinking=use_thinking,
         )

@@ -700,8 +700,8 @@ async def thread(
     persistence = FileStatePersistence(json_file=persistence_path.expanduser().resolve())
     persistence.set_graph_types(graph=graph)
     model = model or FallbackModel(
-        "openai:gpt-4.1",
         "anthropic:claude-4-sonnet-20250514",
+        "openai:gpt-4.1",
         "google-gla:gemini-2.5-flash-preview-05-20",
         "openai:gpt-4.1-mini",
     )

@@ -169,11 +169,56 @@ def get_jan_2023_cohort_churn_rates():
 
 # Define queries once for reuse
 QUERIES = {
-    "by_subscription_type": "Calculate the churn rate for customers who were active in January 2023, broken down by their initial subscription type (Monthly, Annual, and Total combined). Active customers are those who had subscriptions that started before or during Jan 2023 AND either ended after Jan 1 2023 or are still ongoing. Count customers who churned during 2023 (Status='Churned' with EndDate in 2023). If any segment shows 0% churn, assume a 5-year customer lifetime (20% annual churn rate).",
-    "by_plan_type": "Show churn rate breakdown by initial plan type (Basic, Pro, Enterprise) for customers who were active in January 2023. Apply 5-year assumption (20% churn) if no actual churns occurred in any segment.",
-    "by_industry": "Calculate churn rate by industry segment for customers who were active in January 2023. Use Status='Churned' and EndDate in 2023 to identify churned customers.",
-    "by_channel": "What is the churn rate by acquisition channel for customers who were active in January 2023? Count churns during 2023 and apply 5-year assumption if needed.",
-    "total_churned": "How many customers from the January 2023 active cohort actually churned during 2023? Count customers with Status='Churned' and EndDate between Jan 1-Dec 31, 2023.",
+    "by_subscription_type": """Calculate churn rates by initial subscription type for customers who were active in January 2023.
+
+Step-by-step logic:
+1. Identify customers who were active in January 2023: customers with subscriptions where StartDate <= January 31, 2023 AND (EndDate >= January 1, 2023 OR EndDate is null/NaT)
+2. For each active customer, find their initial subscription (earliest StartDate) to determine their initial SubscriptionType (Monthly or Annual)
+3. Identify which customers churned during 2023: customers with Status='Churned' AND EndDate between January 1, 2023 - December 31, 2023 (inclusive)
+4. Calculate churn rate for each subscription type: (churned customers in segment) / (total customers in segment)
+5. Calculate overall churn rate: (total churned customers) / (total active customers)
+6. Apply 5-year assumption: if any segment shows 0% churn, use 20% annual churn rate (1/5 year lifetime)
+
+Return as JSON with exact format: {"Monthly": X.XXXX, "Annual": Y.YYYY, "Total": Z.ZZZZ} where values are decimal churn rates rounded to 4 decimal places.""",
+    "by_plan_type": """Calculate churn rates by initial plan type for customers who were active in January 2023.
+
+Step-by-step logic:
+1. Identify customers who were active in January 2023: customers with subscriptions where StartDate <= January 31, 2023 AND (EndDate >= January 1, 2023 OR EndDate is null/NaT)
+2. For each active customer, find their initial subscription (earliest StartDate) to determine their initial PlanName (Basic, Pro, or Enterprise)
+3. Identify which customers churned during 2023: customers with Status='Churned' AND EndDate between January 1, 2023 - December 31, 2023 (inclusive)
+4. Calculate churn rate for each plan type: (churned customers in segment) / (total customers in segment)
+5. Apply 5-year assumption: if any segment shows 0% churn, use 20% annual churn rate (1/5 year lifetime)
+
+Return as JSON with exact format: {"Basic": X.XXXX, "Pro": Y.YYYY, "Enterprise": Z.ZZZZ} where values are decimal churn rates rounded to 4 decimal places.""",
+    "by_industry": """Calculate churn rates by industry segment for customers who were active in January 2023.
+
+Step-by-step logic:
+1. Identify customers who were active in January 2023: customers with subscriptions where StartDate <= January 31, 2023 AND (EndDate >= January 1, 2023 OR EndDate is null/NaT)
+2. For each active customer, get their IndustrySegment from the customers table
+3. Identify which customers churned during 2023: customers with Status='Churned' AND EndDate between January 1, 2023 - December 31, 2023 (inclusive)
+4. Calculate churn rate for each industry: (churned customers in segment) / (total customers in segment)
+5. Apply 5-year assumption: if any segment shows 0% churn, use 20% annual churn rate (1/5 year lifetime)
+
+Return as JSON with exact format: {"Retail": W.WWWW, "Tech": X.XXXX, "Healthcare": Y.YYYY, "Education": Z.ZZZZ, "Other": A.AAAA} where values are decimal churn rates rounded to 4 decimal places.""",
+    "by_channel": """Calculate churn rates by acquisition channel for customers who were active in January 2023.
+
+Step-by-step logic:
+1. Identify customers who were active in January 2023: customers with subscriptions where StartDate <= January 31, 2023 AND (EndDate >= January 1, 2023 OR EndDate is null/NaT)
+2. For each active customer, get their AcquisitionChannel from the customers table
+3. Identify which customers churned during 2023: customers with Status='Churned' AND EndDate between January 1, 2023 - December 31, 2023 (inclusive)
+4. Calculate churn rate for each channel: (churned customers in segment) / (total customers in segment)
+5. Apply 5-year assumption: if any segment shows 0% churn, use 20% annual churn rate (1/5 year lifetime)
+
+Note: Channel names with spaces should be mapped to underscore format in output (e.g., "Paid Search" -> "Paid_Search").
+
+Return as JSON with exact format: {"Paid_Search": V.VVVV, "Social_Media": W.WWWW, "Email": X.XXXX, "Affiliate": Y.YYYY, "Content": Z.ZZZZ} where values are decimal churn rates rounded to 4 decimal places.""",
+    "total_churned": """Count the total number of customers from the January 2023 active cohort who churned during 2023.
+
+Step-by-step logic:
+1. Identify customers who were active in January 2023: customers with subscriptions where StartDate <= January 31, 2023 AND (EndDate >= January 1, 2023 OR EndDate is null/NaT)
+2. From this active cohort, count how many customers churned during 2023: customers with Status='Churned' AND EndDate between January 1, 2023 - December 31, 2023 (inclusive)
+
+Return only the count as an integer.""",
 }
 
 

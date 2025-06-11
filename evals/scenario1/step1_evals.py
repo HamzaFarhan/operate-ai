@@ -127,11 +127,47 @@ def get_active_customers_jan_2023():
 
 # Define queries once for reuse
 QUERIES = {
-    "total_count": "How many customers were active in January 2023? Active customers are those who had subscriptions that started before or during Jan 2023 AND either ended after Jan 1 2023 or are still ongoing.",
-    "by_subscription_type": "Show me the breakdown of customers who were active in January 2023 by their initial subscription type (Monthly vs Annual). Use each customer's very first subscription to determine their original billing preference.",
-    "by_plan_type": "Break down customers who were active in January 2023 by their initial plan type (Basic, Pro, Enterprise). Show the distribution based on their original plan choice.",
-    "by_industry": "Show the industry distribution of customers who were active in January 2023.",
-    "by_acquisition_channel": "What are the acquisition channels for customers who were active in January 2023?",
+    "total_count": """Count the total number of unique customers who had at least one subscription that was active at any point during January 2023 (January 1-31, 2023). 
+
+A subscription is considered active during January 2023 if:
+- The subscription StartDate is on or before January 31, 2023 AND
+- The subscription EndDate is on or after January 1, 2023 OR the subscription has no EndDate (null/NaT, meaning it's still ongoing)
+
+Return only the count as an integer.""",
+    "by_subscription_type": """For customers who were active in January 2023, provide a breakdown by their INITIAL subscription billing type (Monthly vs Annual).
+
+Step-by-step logic:
+1. Identify all customers who had at least one subscription active during January 2023 (using the same active definition as above)
+2. For each of these customers, find their very FIRST subscription ever (earliest StartDate) 
+3. Use that first subscription's SubscriptionType field to categorize them as either "Monthly" or "Annual"
+4. Count how many customers fall into each category based on their initial billing preference
+
+Return the counts as: {"monthly": X, "annual": Y} where X and Y are integers representing customer counts.""",
+    "by_plan_type": """For customers who were active in January 2023, provide a breakdown by their INITIAL plan tier (Basic, Pro, Enterprise).
+
+Step-by-step logic:
+1. Identify all customers who had at least one subscription active during January 2023 
+2. For each of these customers, find their very FIRST subscription ever (earliest StartDate)
+3. Use that first subscription's PlanName field to categorize them as "Basic", "Pro", or "Enterprise"  
+4. Count how many customers fall into each plan tier based on their original plan choice
+
+Return the counts as: {"basic": X, "pro": Y, "enterprise": Z} where X, Y, Z are integers representing customer counts.""",
+    "by_industry": """For customers who were active in January 2023, provide a breakdown by their industry segment.
+
+Step-by-step logic:
+1. Identify all customers who had at least one subscription active during January 2023
+2. Use each customer's IndustrySegment field from the customers table to categorize them
+3. Count how many customers belong to each industry: "Retail", "Tech", "Healthcare", "Education", "Other"
+
+Return the counts as: {"retail": A, "tech": B, "healthcare": C, "education": D, "other": E} where A,B,C,D,E are integers representing customer counts.""",
+    "by_acquisition_channel": """For customers who were active in January 2023, provide a breakdown by their original acquisition channel.
+
+Step-by-step logic:
+1. Identify all customers who had at least one subscription active during January 2023
+2. Use each customer's AcquisitionChannel field from the customers table to categorize them  
+3. Count how many customers were acquired through each channel: "Paid Search", "Social Media", "Email", "Affiliate", "Content"
+
+Return the counts as: {"paid_search": A, "social_media": B, "email": C, "affiliate": D, "content": E} where A,B,C,D,E are integers representing customer counts.""",
 }
 
 

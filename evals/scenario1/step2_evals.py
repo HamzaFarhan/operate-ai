@@ -6,6 +6,7 @@ Combines ground truth generation with evaluation dataset creation.
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import logfire
 import pandas as pd
@@ -48,7 +49,7 @@ class ARPUByChannel(BaseModel):
 type ResultT = float | ARPUBySubscriptionType | ARPUByPlanType | ARPUByIndustry | ARPUByChannel
 
 
-def get_jan_2023_cohort_arpu():
+def get_jan_2023_cohort_arpu() -> dict[str, Any]:
     """
     Calculates ARPU for customers who were active in Jan 2023, based on their
     profit generated during Jan-Dec 2023.
@@ -162,11 +163,79 @@ def get_jan_2023_cohort_arpu():
 
 # Define queries once for reuse
 QUERIES = {
-    "by_subscription_type": "Calculate the Average Revenue Per User (ARPU) for customers who were active in January 2023, broken down by their initial subscription type (Monthly, Annual, and Total combined). Active customers are those who had subscriptions that started before or during Jan 2023 AND either ended after Jan 1 2023 or are still ongoing. Use their 2023 profit data (Jan-Dec 2023) to calculate ARPU.",
-    "by_plan_type": "Show ARPU breakdown by initial plan type (Basic, Pro, Enterprise) for customers who were active in January 2023. Use their 2023 profit to calculate average revenue per user by original plan choice.",
-    "by_industry": "Calculate ARPU by industry segment for customers who were active in January 2023. Use 2023 profit data to determine average revenue per user by industry.",
-    "by_channel": "What is the ARPU by acquisition channel for customers who were active in January 2023? Calculate using their 2023 profit data.",
-    "total_profit": "What was the total profit generated in 2023 by customers who were active in January 2023?",
+    "by_subscription_type": """Calculate the Average Revenue Per User (ARPU) for customers who were active in January 2023, broken down by their initial subscription type.
+
+Step-by-step logic:
+1. Identify customers who were active in January 2023: customers who had at least one subscription where StartDate <= January 31, 2023 AND (EndDate >= January 1, 2023 OR EndDate is null/NaT)
+2. For each active customer, find their initial (first) subscription by sorting subscriptions by StartDate ascending and taking the first record
+3. Group customers by their initial subscription's SubscriptionType field (Monthly, Annual)
+4. For each group, calculate total profit from orders placed between January 1, 2023 and December 31, 2023 (inclusive) by customers in that group
+5. Calculate ARPU = total profit / number of customers for each subscription type
+6. Calculate total ARPU = total profit across all customers / total number of customers
+
+Use these exact table references:
+- subscriptions.csv: StartDate, EndDate, CustomerID, SubscriptionType, PlanName
+- customers.csv: CustomerID, IndustrySegment, AcquisitionChannel  
+- orders.csv: CustomerID, OrderDate, Profit
+
+Return as JSON with exactly these fields: {"monthly": X.XX, "annual": X.XX, "total": X.XX} where values are floats rounded to 2 decimal places.""",
+    "by_plan_type": """Calculate the Average Revenue Per User (ARPU) for customers who were active in January 2023, broken down by their initial plan type.
+
+Step-by-step logic:
+1. Identify customers who were active in January 2023: customers who had at least one subscription where StartDate <= January 31, 2023 AND (EndDate >= January 1, 2023 OR EndDate is null/NaT)
+2. For each active customer, find their initial (first) subscription by sorting subscriptions by StartDate ascending and taking the first record
+3. Group customers by their initial subscription's PlanName field (Basic, Pro, Enterprise)
+4. For each group, calculate total profit from orders placed between January 1, 2023 and December 31, 2023 (inclusive) by customers in that group
+5. Calculate ARPU = total profit / number of customers for each plan type
+
+Use these exact table references:
+- subscriptions.csv: StartDate, EndDate, CustomerID, PlanName
+- customers.csv: CustomerID
+- orders.csv: CustomerID, OrderDate, Profit
+
+Return as JSON with exactly these fields: {"basic": X.XX, "pro": X.XX, "enterprise": X.XX} where values are floats rounded to 2 decimal places.""",
+    "by_industry": """Calculate the Average Revenue Per User (ARPU) for customers who were active in January 2023, broken down by industry segment.
+
+Step-by-step logic:
+1. Identify customers who were active in January 2023: customers who had at least one subscription where StartDate <= January 31, 2023 AND (EndDate >= January 1, 2023 OR EndDate is null/NaT)
+2. For each active customer, get their IndustrySegment from the customers table
+3. Group customers by IndustrySegment (Education, Tech, Healthcare, Retail, Other)
+4. For each group, calculate total profit from orders placed between January 1, 2023 and December 31, 2023 (inclusive) by customers in that group
+5. Calculate ARPU = total profit / number of customers for each industry
+
+Use these exact table references:
+- subscriptions.csv: StartDate, EndDate, CustomerID
+- customers.csv: CustomerID, IndustrySegment
+- orders.csv: CustomerID, OrderDate, Profit
+
+Return as JSON with exactly these fields: {"education": X.XX, "tech": X.XX, "healthcare": X.XX, "retail": X.XX, "other": X.XX} where values are floats rounded to 2 decimal places.""",
+    "by_channel": """Calculate the Average Revenue Per User (ARPU) for customers who were active in January 2023, broken down by acquisition channel.
+
+Step-by-step logic:
+1. Identify customers who were active in January 2023: customers who had at least one subscription where StartDate <= January 31, 2023 AND (EndDate >= January 1, 2023 OR EndDate is null/NaT)
+2. For each active customer, get their AcquisitionChannel from the customers table
+3. Group customers by AcquisitionChannel (Affiliate, Email, Social Media, Content, Paid Search)
+4. For each group, calculate total profit from orders placed between January 1, 2023 and December 31, 2023 (inclusive) by customers in that group
+5. Calculate ARPU = total profit / number of customers for each channel
+
+Use these exact table references:
+- subscriptions.csv: StartDate, EndDate, CustomerID
+- customers.csv: CustomerID, AcquisitionChannel
+- orders.csv: CustomerID, OrderDate, Profit
+
+Return as JSON with exactly these fields: {"affiliate": X.XX, "email": X.XX, "social_media": X.XX, "content": X.XX, "paid_search": X.XX} where values are floats rounded to 2 decimal places.""",
+    "total_profit": """Calculate the total profit generated in 2023 by customers who were active in January 2023.
+
+Step-by-step logic:
+1. Identify customers who were active in January 2023: customers who had at least one subscription where StartDate <= January 31, 2023 AND (EndDate >= January 1, 2023 OR EndDate is null/NaT)
+2. Find all orders placed by these customers between January 1, 2023 and December 31, 2023 (inclusive)
+3. Sum the Profit field from all these orders
+
+Use these exact table references:
+- subscriptions.csv: StartDate, EndDate, CustomerID
+- orders.csv: CustomerID, OrderDate, Profit
+
+Return only the total profit as a float (e.g., 123456.78).""",
 }
 
 

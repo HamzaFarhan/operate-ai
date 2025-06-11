@@ -1,0 +1,65 @@
+---
+description: 
+globs: *_evals.py
+alwaysApply: false
+---
+# Evaluation Query Clarity Rules
+
+## Purpose
+AI evaluation queries must be extremely specific and unambiguous to prevent misinterpretation by AI agents during evaluation.
+
+## Key Principles
+
+### 1. Define All Terms Explicitly
+- Never assume the AI knows what "active customers" means
+- Always define date ranges with exact start/end dates
+- Specify which tables and fields to use
+- Define any business logic or calculations
+
+### 2. Use Step-by-Step Logic
+For complex queries, break down the process:
+```
+Step-by-step logic:
+1. Identify all customers who [specific criteria]
+2. For each customer, find their [specific field/calculation] 
+3. Use [specific field] to categorize them as [exact categories]
+4. Count how many customers fall into each category
+```
+
+### 3. Specify Exact Output Format
+Always include expected return format:
+- `Return only the count as an integer.`
+- `Return the counts as: {"monthly": X, "annual": Y} where X and Y are integers`
+- Include exact field names and data types
+
+### 4. Disambiguate Time References
+- "Initial/first subscription" vs "current subscription" 
+- "Active during January 2023" vs "Active as of January 2023"
+- Always specify: "using the same active definition as above" when referencing previous criteria
+
+## Examples
+
+### ❌ Bad (Ambiguous)
+```python
+"How many customers were active in January 2023?"
+```
+
+### ✅ Good (Unambiguous)  
+```python
+"""Count the total number of unique customers who had at least one subscription that was active at any point during January 2023 (January 1-31, 2023). 
+
+A subscription is considered active during January 2023 if:
+- The subscription StartDate is on or before January 31, 2023 AND
+- The subscription EndDate is on or after January 1, 2023 OR the subscription has no EndDate (null/NaT, meaning it's still ongoing)
+
+Return only the count as an integer."""
+```
+
+## Reference Implementation
+See [evals/scenario1/step1_evals.py](mdc:evals/scenario1/step1_evals.py) QUERIES section for examples of properly formatted evaluation queries.
+
+## Application
+Apply these rules to:
+- Any new evaluation files created
+- Query strings in QUERIES dictionaries
+- Both the query text and any related documentation

@@ -5,17 +5,23 @@ Combines ground truth generation with evaluation dataset creation.
 
 import json
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 import logfire
 import pandas as pd
 from pydantic import BaseModel, Field
+from pydantic_ai.models import KnownModelName
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_evals import Case, Dataset
 
+from operate_ai.cfo_graph import setup_workspace
 from operate_ai.evals import EqEvaluator, Query, eval_task
 
 logfire.configure()
+MAIN_DIR = Path(__file__).parent.parent.parent
+DATA_DIR = MAIN_DIR / "operateai_scenario1_data"
 
 
 class ARPUBySubscriptionType(BaseModel):
@@ -239,7 +245,7 @@ Return only the total profit as a float (e.g., 123456.78).""",
 }
 
 
-def create_step2_dataset():
+def create_step2_dataset(start_index: int | None = None, end_index: int | None = None):
     """Create the evaluation dataset using ground truth data"""
     # Get ground truth
     ground_truth = get_jan_2023_cohort_arpu()
@@ -250,69 +256,72 @@ def create_step2_dataset():
     industry_data = ground_truth["arpu_by_industry"]
     channel_data = ground_truth["arpu_by_channel"]
 
+    cases = [
+        Case(
+            name="step2_1",
+            inputs=Query(
+                query=QUERIES["by_subscription_type"],
+                output_type=ARPUBySubscriptionType,
+            ),
+            expected_output=ARPUBySubscriptionType(
+                monthly=subscription_type_data.get("Monthly", 0.0),
+                annual=subscription_type_data.get("Annual", 0.0),
+                total=subscription_type_data.get("Total", 0.0),
+            ),
+        ),
+        Case(
+            name="step2_2",
+            inputs=Query(
+                query=QUERIES["by_plan_type"],
+                output_type=ARPUByPlanType,
+            ),
+            expected_output=ARPUByPlanType(
+                basic=plan_type_data.get("Basic", 0.0),
+                pro=plan_type_data.get("Pro", 0.0),
+                enterprise=plan_type_data.get("Enterprise", 0.0),
+            ),
+        ),
+        Case(
+            name="step2_3",
+            inputs=Query(
+                query=QUERIES["by_industry"],
+                output_type=ARPUByIndustry,
+            ),
+            expected_output=ARPUByIndustry(
+                education=industry_data.get("Education", 0.0),
+                tech=industry_data.get("Tech", 0.0),
+                healthcare=industry_data.get("Healthcare", 0.0),
+                retail=industry_data.get("Retail", 0.0),
+                other=industry_data.get("Other", 0.0),
+            ),
+        ),
+        Case(
+            name="step2_4",
+            inputs=Query(
+                query=QUERIES["by_channel"],
+                output_type=ARPUByChannel,
+            ),
+            expected_output=ARPUByChannel(
+                affiliate=channel_data.get("Affiliate", 0.0),
+                email=channel_data.get("Email", 0.0),
+                social_media=channel_data.get("Social Media", 0.0),
+                content=channel_data.get("Content", 0.0),
+                paid_search=channel_data.get("Paid Search", 0.0),
+            ),
+        ),
+        Case(
+            name="step2_5",
+            inputs=Query(
+                query=QUERIES["total_profit"],
+                output_type=float,
+            ),
+            expected_output=ground_truth["total_profit_2023"],
+        ),
+    ]
+    start_index = max(0, start_index or 0)
+    end_index = min(len(cases), max(end_index or len(cases), start_index + 1))
     dataset = Dataset[Query[ResultT], ResultT](
-        cases=[
-            Case(
-                name="step2_1",
-                inputs=Query(
-                    query=QUERIES["by_subscription_type"],
-                    output_type=ARPUBySubscriptionType,
-                ),
-                expected_output=ARPUBySubscriptionType(
-                    monthly=subscription_type_data.get("Monthly", 0.0),
-                    annual=subscription_type_data.get("Annual", 0.0),
-                    total=subscription_type_data.get("Total", 0.0),
-                ),
-            ),
-            Case(
-                name="step2_2",
-                inputs=Query(
-                    query=QUERIES["by_plan_type"],
-                    output_type=ARPUByPlanType,
-                ),
-                expected_output=ARPUByPlanType(
-                    basic=plan_type_data.get("Basic", 0.0),
-                    pro=plan_type_data.get("Pro", 0.0),
-                    enterprise=plan_type_data.get("Enterprise", 0.0),
-                ),
-            ),
-            Case(
-                name="step2_3",
-                inputs=Query(
-                    query=QUERIES["by_industry"],
-                    output_type=ARPUByIndustry,
-                ),
-                expected_output=ARPUByIndustry(
-                    education=industry_data.get("Education", 0.0),
-                    tech=industry_data.get("Tech", 0.0),
-                    healthcare=industry_data.get("Healthcare", 0.0),
-                    retail=industry_data.get("Retail", 0.0),
-                    other=industry_data.get("Other", 0.0),
-                ),
-            ),
-            Case(
-                name="step2_4",
-                inputs=Query(
-                    query=QUERIES["by_channel"],
-                    output_type=ARPUByChannel,
-                ),
-                expected_output=ARPUByChannel(
-                    affiliate=channel_data.get("Affiliate", 0.0),
-                    email=channel_data.get("Email", 0.0),
-                    social_media=channel_data.get("Social Media", 0.0),
-                    content=channel_data.get("Content", 0.0),
-                    paid_search=channel_data.get("Paid Search", 0.0),
-                ),
-            ),
-            Case(
-                name="step2_5",
-                inputs=Query(
-                    query=QUERIES["total_profit"],
-                    output_type=float,
-                ),
-                expected_output=ground_truth["total_profit_2023"],
-            ),
-        ],
+        cases=cases[start_index:end_index],
         evaluators=[EqEvaluator[ResultT]()],
     )
 
@@ -361,15 +370,28 @@ def generate_csv():
     return eval_df
 
 
-def evaluate():
-    dataset = create_step2_dataset()
-    report = dataset.evaluate_sync(task=eval_task, name="step2_evals")
+def evaluate(workspace_name: str = "1", start_index: int | None = None, end_index: int | None = None):
+    thinking = False
+    name = f"step2_evals_thinking_{thinking}"
+    model: KnownModelName | FallbackModel = FallbackModel(
+        "anthropic:claude-4-sonnet-20250514",
+        "openai:gpt-4.1",
+        "google-gla:gemini-2.5-flash-preview-05-20",
+        "openai:gpt-4.1-mini",
+    )
+    dataset = create_step2_dataset(start_index=start_index, end_index=end_index)
+    workspace_dir = MAIN_DIR / f"workspaces/{workspace_name}"
+    setup_workspace(data_dir=DATA_DIR, workspace_dir=workspace_dir, delete_existing=True)
+
+    report = dataset.evaluate_sync(
+        task=partial(eval_task, model=model, use_thinking=thinking, workspace_dir=workspace_dir), name=name
+    )
     report.print(include_output=True, include_expected_output=True, include_input=True, include_averages=True)
 
 
 if __name__ == "__main__":
     # Generate CSV
-    generate_csv()
+    # generate_csv()
 
-    # Run evaluation (can be commented out)
-    # evaluate()
+    # Run evaluation
+    evaluate(workspace_name="1", start_index=2, end_index=3)

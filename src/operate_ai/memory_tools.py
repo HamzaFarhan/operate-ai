@@ -98,6 +98,8 @@ async def get_knowledge_graph_size() -> str:
     Get the size of the knowledge graph.
     """
     graph = await load_knowledge_graph()
+    if not graph.entities:
+        return "empty"
     kg_tokens = len(graph.model_dump_json()) * 1.3
     for kg_size, limit in KG_LIMITS.items():
         if kg_tokens <= limit:

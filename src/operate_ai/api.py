@@ -75,7 +75,7 @@ async def create_workspace(workspace: WorkspaceCreate):
 
     # Create workspace directory structure
     workspace_dir.mkdir(parents=True)
-    logger.info(f"Created workspace directory at {workspace_dir}")
+    # logger.info(f"Created workspace directory at {workspace_dir}")
     (workspace_dir / "data").mkdir()
     (workspace_dir / "threads").mkdir()
 

@@ -96,7 +96,7 @@ async def upload_csv_to_workspace(workspace_id: str, file: io.BytesIO):
     # Get the workspace directory
     workspace_dir = (WORKSPACES_DIR / workspace_id) / "data"
     workspace_dir.mkdir(exist_ok=True, parents=True)
-    logger.info(f"Created workspace directory at {workspace_dir}")
+    # logger.info(f"Created workspace directory at {workspace_dir}")
 
     # Save the uploaded file to the workspace data directory
     file_path = workspace_dir / file.name
@@ -300,7 +300,13 @@ async def main():
                         resp = parse_response(msg.content)
                         if isinstance(resp, RunSQLResult):
                             st.session_state.show_countdown = True
-                            st.markdown("Ran an SQL query, please review")
+                            sql_header = "Ran an SQL query, please review"
+                            if resp.is_task_result:
+                                sql_header = "Task completed"
+                                st.session_state.show_countdown = False
+                                st.session_state.countdown = COUNT_DOWN_SECONDS
+                                st.session_state.cancel_countdown = True
+                            st.markdown(sql_header)
                             with st.expander(resp.purpose or "Show Progress"):
                                 tabs = st.tabs(["CSV Preview", "SQL Command"])
                                 with tabs[0]:

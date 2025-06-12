@@ -192,10 +192,10 @@ class RunSQL(BaseModel):
             "Example: 'select names from read_csv('workspaces/1/data/orders.csv')'"
         )
     )
-    preview_rows: int = Field(
-        default=RUN_SQL_PREVIEW_ROWS,
-        description="Number of rows to preview. 2-5 should be enough for most queries.",
-    )
+    # preview_rows: int = Field(
+    #     default=RUN_SQL_PREVIEW_ROWS,
+    #     description="Number of rows to preview. 2-5 should be enough for most queries.",
+    # )
     file_name: str | None = Field(
         description=(
             "Descriptive name of the file based on the query to save the result to in the `analysis_dir`.\n"
@@ -203,6 +203,10 @@ class RunSQL(BaseModel):
             "Example: 'customers_joined_in_2023.csv'\n"
             "'.csv' is optional. It will be added automatically if not provided."
         )
+    )
+    is_task_result: bool = Field(
+        default=False,
+        description="If True, the result will be used as a task result and we can stop. Otherwise, it will be used as a tool result.",
     )
 
 
@@ -216,32 +220,16 @@ class RunSQLResult(BaseModel):
     csv_path: str
     row_count: int
     preview: list[dict[str, Any]]
+    is_task_result: bool = False
 
 
 async def run_sql(
-    analysis_dir: str, query: str, preview_rows: int = 2, file_name: str | None = None
+    analysis_dir: str,
+    query: str,
+    preview_rows: int = RUN_SQL_PREVIEW_ROWS,
+    file_name: str | None = None,
+    is_task_result: bool = False,
 ) -> RunSQLResult:
-    """
-    1. Runs an SQL query on csv file(s) using duckdb
-    2. Writes the full result to disk
-    3. Returns a ResultHandle with a small in-memory preview.
-
-    Parameters
-    ----------
-    query : str
-        The SQL query to execute.
-    preview_rows : int, default 3
-        Number of rows to preview. 2-5 should be enough for most queries.
-    file_name : str | None, default None
-        Descriptive name of the file based on the query to save the result to in the `analysis_dir`.
-        If None, a file path will be created in the `analysis_dir` based on the current timestamp.
-
-    Returns
-    -------
-    RunSQLResult
-        A lightweight reference to the result on disk.
-    """
-
     def check_csv_files_exist(paths: list[str]) -> None:
         """Check if all CSV files in the paths exist."""
         for path in paths:
@@ -278,6 +266,7 @@ async def run_sql(
             csv_path=str(file_path),
             preview=preview_csv(df=df, num_rows=preview_rows),  # type: ignore
             row_count=len(df),
+            is_task_result=is_task_result,
         )
 
     try:
@@ -297,8 +286,9 @@ class RunSQLNode(BaseNode[GraphState, GraphDeps, RunSQLResult]):
     docstring_notes = True
     purpose: str
     query: str
-    preview_rows: int = 2
+    preview_rows: int = RUN_SQL_PREVIEW_ROWS
     file_name: str | None = None
+    is_task_result: bool = False
 
     async def run(self, ctx: GraphRunContext[GraphState, GraphDeps]) -> RunAgentNode | End[RunSQLResult]:
         try:
@@ -307,6 +297,7 @@ class RunSQLNode(BaseNode[GraphState, GraphDeps, RunSQLResult]):
                 query=self.query,
                 preview_rows=self.preview_rows,
                 file_name=self.file_name,
+                is_task_result=self.is_task_result,
             )
             sql_result.purpose = self.purpose
             ctx.state.chat_messages.append(
@@ -597,8 +588,9 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
                     return RunSQLNode(
                         purpose=res.output.purpose,
                         query=res.output.query,
-                        preview_rows=res.output.preview_rows,
+                        # preview_rows=res.output.preview_rows,
                         file_name=res.output.file_name,
+                        is_task_result=res.output.is_task_result,
                     )
                 return error_result
             elif isinstance(res.output, UserInteraction):

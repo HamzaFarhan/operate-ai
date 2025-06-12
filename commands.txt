@@ -21,7 +21,7 @@ sudo su -
 
 # Update Code:
 
-cd /opt/data/operatea-app/data/workspaces/
+rm -r /opt/data/operatea-app/data/workspaces/
 
 cd /opt/apps-demo/operateai-app/excel-mcp-server && git pull && cd /opt/apps-demo/operateai-app/operate-ai && git pull && cd /opt/apps-demo/operateai-app/ && docker build . -f operate-ai/Dockerfile_ui_app -t gcr.io/dreamai-pocs/operateai-ui-app:v1 && docker build . -f operate-ai/Dockerfile_bkend_app -t gcr.io/dreamai-pocs/operateai-bkend-app:v1 && docker-compose down && docker-compose up -d
 

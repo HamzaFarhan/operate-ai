@@ -25,7 +25,6 @@ API_PORT = os.getenv("API_PORT", "8000")
 API_URL = f"http://{API_HOST}:{API_PORT}"
 WORKSPACES_DIR = Path(os.getenv("WORKSPACES_DIR", "workspaces"))
 WORKSPACES_DIR.mkdir(exist_ok=True)
-logger.info(f"Created workspaces directory at {WORKSPACES_DIR}")
 TIMEOUT = 900
 COUNT_DOWN_SECONDS = 30
 CONTINUE_MESSAGE = "Looks good, please continue."
@@ -226,56 +225,73 @@ async def main():
         workspace_id = st.session_state.workspace_id
         thread_id = st.session_state.thread_id
         thread_name = st.session_state.thread_name
-        messages = await get_messages(workspace_id, thread_id)
+        # Persistent Memory tab across all threads, if memory.json exists
+        memory_path = WORKSPACES_DIR / workspace_id / "memory.json"
+        if memory_path.exists():
+            chat_tab, memory_tab = st.tabs(["Chat", "Memory"])
+            with memory_tab:
+                st.subheader("Workspace Memory")
+                try:
+                    mem = json.loads(memory_path.read_text())
+                    st.json(mem)
+                except Exception as e:
+                    st.error(f"Could not load memory.json: {e}")
+            container = chat_tab
+        else:
+            container = st.container()
 
-        for i, msg in enumerate(messages):
-            if msg.role == "user":
-                with st.chat_message("user"):
-                    st.markdown(msg.content)
-            else:
-                with st.chat_message("assistant"):
-                    resp = parse_response(msg.content)
-                    if isinstance(resp, RunSQLResult):
-                        st.session_state.show_countdown = True
-                        st.markdown("Ran an SQL query, please review")
-                        with st.expander(resp.purpose or "Show Progress"):
-                            tabs = st.tabs(["CSV Preview", "SQL Command"])
-                            with tabs[0]:
-                                csv_path = resp.csv_path
-                                try:
-                                    df = pd.read_csv(csv_path)  # type: ignore
-                                    st.dataframe(df)  # type: ignore
-                                except Exception:
-                                    st.error("Could not read CSV file.")
-                            with tabs[1]:
-                                sql_path = resp.sql_path
-                                try:
-                                    sql_text = Path(sql_path).read_text()
-                                except Exception:
-                                    sql_text = "(Could not read SQL file)"
-                                st.code(sql_text, language="sql")
+        # All of the existing message‐rendering & input logic goes under this block:
+        with container:
+            messages = await get_messages(workspace_id, thread_id)
 
-                    elif isinstance(resp, WriteDataToExcelResult):
-                        excel_path = resp.file_path
-                        try:
-                            excel_data: dict[str, pd.DataFrame] = pd.read_excel(  # type: ignore
-                                excel_path, sheet_name=None
-                            )
-                            file_bytes = Path(excel_path).read_bytes()
-                        except Exception as e:
-                            logger.error(f"Error reading Excel file: {e}")
-                            continue
-                        st.session_state.show_countdown = True
-                        st.markdown("Wrote the results to a Workbook, please review")
-                        with st.expander("Show Results"):
-                            sheet_names = list(excel_data.keys())
-                            sheet_tabs = st.tabs(sheet_names)
-                            for tab, sheet_name in zip(sheet_tabs, sheet_names):
-                                with tab:
+            for i, msg in enumerate(messages):
+                if msg.role == "user":
+                    with st.chat_message("user"):
+                        st.markdown(msg.content)
+                else:
+                    with st.chat_message("assistant"):
+                        resp = parse_response(msg.content)
+                        if isinstance(resp, RunSQLResult):
+                            st.session_state.show_countdown = True
+                            st.markdown("Ran an SQL query, please review")
+                            with st.expander(resp.purpose or "Show Progress"):
+                                tabs = st.tabs(["CSV Preview", "SQL Command"])
+                                with tabs[0]:
+                                    csv_path = resp.csv_path
                                     try:
-                                        st.dataframe(excel_data[sheet_name])  # type: ignore
+                                        df = pd.read_csv(csv_path)  # type: ignore
+                                        st.dataframe(df)  # type: ignore
                                     except Exception:
-                                        st.error(f"Could not read sheet: {sheet_name}")
+                                        st.error("Could not read CSV file.")
+                                with tabs[1]:
+                                    sql_path = resp.sql_path
+                                    try:
+                                        sql_text = Path(sql_path).read_text()
+                                    except Exception:
+                                        sql_text = "(Could not read SQL file)"
+                                    st.code(sql_text, language="sql")
+
+                        elif isinstance(resp, WriteDataToExcelResult):
+                            excel_path = resp.file_path
+                            try:
+                                excel_data: dict[str, pd.DataFrame] = pd.read_excel(  # type: ignore
+                                    excel_path, sheet_name=None
+                                )
+                                file_bytes = Path(excel_path).read_bytes()
+                            except Exception as e:
+                                logger.error(f"Error reading Excel file: {e}")
+                                continue
+                            st.session_state.show_countdown = True
+                            st.markdown("Wrote the results to a Workbook, please review")
+                            with st.expander("Show Results"):
+                                sheet_names = list(excel_data.keys())
+                                sheet_tabs = st.tabs(sheet_names)
+                                for tab, sheet_name in zip(sheet_tabs, sheet_names):
+                                    with tab:
+                                        try:
+                                            st.dataframe(excel_data[sheet_name])  # type: ignore
+                                        except Exception:
+                                            st.error(f"Could not read sheet: {sheet_name}")
                             st.download_button(
                                 label="Download Excel file",
                                 data=file_bytes,
@@ -283,68 +299,68 @@ async def main():
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key=f"download_excel_{thread_id}_{i}",
                             )
-                    else:
-                        st.session_state.show_countdown = False
-                        st.markdown(resp)
-                    if st.button("New Thread From Here", key=f"new_thread_from_here_{thread_id}_{i}"):
-                        logger.info(f"Creating new thread from here: {msg.state_path}")
-                        new_thread_name = f"{thread_name}_{uuid4()}"
-                        new_thread = await create_thread(
-                            workspace_id, new_thread_name, prev_state_path=msg.state_path
-                        )
-                        if new_thread:
-                            st.session_state.thread_id = new_thread.id
-                            st.session_state.thread_name = new_thread_name
-                            st.success(f"Created thread: {new_thread_name}")
-                            st.rerun()
                         else:
-                            st.error("Failed to create thread")
+                            st.session_state.show_countdown = False
+                            st.markdown(resp)
+                        if st.button("New Thread From Here", key=f"new_thread_from_here_{thread_id}_{i}"):
+                            logger.info(f"Creating new thread from here: {msg.state_path}")
+                            new_thread_name = f"{thread_name}_{uuid4()}"
+                            new_thread = await create_thread(
+                                workspace_id, new_thread_name, prev_state_path=msg.state_path
+                            )
+                            if new_thread:
+                                st.session_state.thread_id = new_thread.id
+                                st.session_state.thread_name = new_thread_name
+                                st.success(f"Created thread: {new_thread_name}")
+                                st.rerun()
+                            else:
+                                st.error("Failed to create thread")
 
-        if st.session_state.show_countdown and not st.session_state.cancel_countdown:
-            if "countdown" not in st.session_state:
-                st.session_state.countdown = COUNT_DOWN_SECONDS
-            if st.session_state.countdown > 0 and not st.session_state.force_continue:
-                col1, col2, col3 = st.columns([0.8, 0.07, 0.13])
-                with col1:
-                    st.progress(min(st.session_state.countdown / COUNT_DOWN_SECONDS, 1.0))
-                    st.text(f"Continuing in {st.session_state.countdown} seconds...")
-                with col2:
-                    if st.button("Cancel"):
-                        st.session_state.show_countdown = False
-                        st.session_state.countdown = COUNT_DOWN_SECONDS
-                        st.session_state.cancel_countdown = True
+            if st.session_state.show_countdown and not st.session_state.cancel_countdown:
+                if "countdown" not in st.session_state:
+                    st.session_state.countdown = COUNT_DOWN_SECONDS
+                if st.session_state.countdown > 0 and not st.session_state.force_continue:
+                    col1, col2, col3 = st.columns([0.8, 0.07, 0.13])
+                    with col1:
+                        st.progress(min(st.session_state.countdown / COUNT_DOWN_SECONDS, 1.0))
+                        st.text(f"Continuing in {st.session_state.countdown} seconds...")
+                    with col2:
+                        if st.button("Cancel"):
+                            st.session_state.show_countdown = False
+                            st.session_state.countdown = COUNT_DOWN_SECONDS
+                            st.session_state.cancel_countdown = True
+                            st.rerun()
+                    with col3:
+                        if st.button("Continue"):
+                            st.session_state.show_countdown = False
+                            st.session_state.countdown = COUNT_DOWN_SECONDS
+                            st.session_state.force_continue = True
+                            st.rerun()
+
+                # Decrease countdown
+                st.session_state.countdown -= 1
+
+                # If countdown reaches zero, send message
+                if st.session_state.countdown < 0 or st.session_state.force_continue:
+                    st.session_state.show_countdown = False
+                    st.session_state.countdown = COUNT_DOWN_SECONDS
+                    st.session_state.force_continue = False
+                    response = await send_message(workspace_id, thread_id, CONTINUE_MESSAGE)
+                    if response:
                         st.rerun()
-                with col3:
-                    if st.button("Continue"):
-                        st.session_state.show_countdown = False
-                        st.session_state.countdown = COUNT_DOWN_SECONDS
-                        st.session_state.force_continue = True
+                else:
+                    # Use st.rerun to update the UI with new countdown value
+                    time.sleep(1)  # Small delay to prevent too rapid refreshes
+                    st.rerun()
+
+            if user_message := st.chat_input("Your message..."):
+                with st.chat_message("user"):
+                    st.markdown(user_message)
+                with st.spinner("Processing..."):
+                    response = await send_message(workspace_id, thread_id, user_message)
+                    if response:
+                        st.session_state.cancel_countdown = False
                         st.rerun()
-
-            # Decrease countdown
-            st.session_state.countdown -= 1
-
-            # If countdown reaches zero, send message
-            if st.session_state.countdown < 0 or st.session_state.force_continue:
-                st.session_state.show_countdown = False
-                st.session_state.countdown = COUNT_DOWN_SECONDS
-                st.session_state.force_continue = False
-                response = await send_message(workspace_id, thread_id, CONTINUE_MESSAGE)
-                if response:
-                    st.rerun()
-            else:
-                # Use st.rerun to update the UI with new countdown value
-                time.sleep(1)  # Small delay to prevent too rapid refreshes
-                st.rerun()
-
-        if user_message := st.chat_input("Your message..."):
-            with st.chat_message("user"):
-                st.markdown(user_message)
-            with st.spinner("Processing..."):
-                response = await send_message(workspace_id, thread_id, user_message)
-                if response:
-                    st.session_state.cancel_countdown = False
-                    st.rerun()
     else:
         st.info("Please select or create a workspace and thread from the sidebar.")
 

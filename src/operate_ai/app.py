@@ -233,7 +233,54 @@ async def main():
                 st.subheader("Workspace Memory")
                 try:
                     mem = json.loads(memory_path.read_text())
-                    st.json(mem)
+
+                    # Initialize edit mode state
+                    edit_key = f"edit_memory_{workspace_id}"
+                    if edit_key not in st.session_state:
+                        st.session_state[edit_key] = False
+
+                    if not st.session_state[edit_key]:
+                        # Display mode - show formatted JSON
+                        st.json(mem)
+
+                        col1, col2 = st.columns([1, 4])
+                        with col1:
+                            if st.button("Edit Memory", type="secondary"):
+                                st.session_state[edit_key] = True
+                                st.rerun()
+                    else:
+                        # Edit mode - show text area
+                        edited_json = st.text_area(
+                            "Edit Memory (JSON format)",
+                            value=json.dumps(mem, indent=2),
+                            height=800,
+                            key=f"memory_editor_{workspace_id}",
+                        )
+
+                        col1, col2, col3 = st.columns([0.05, 0.05, 0.9])
+                        with col1:
+                            if st.button("Save", type="primary"):
+                                try:
+                                    # Validate JSON format
+                                    parsed_json = json.loads(edited_json)
+                                    # Write back to file
+                                    memory_path.write_text(json.dumps(parsed_json, indent=2))
+                                    st.session_state[edit_key] = False
+                                    st.success("Memory saved successfully!")
+                                    st.rerun()
+                                except json.JSONDecodeError as e:
+                                    st.error(f"Invalid JSON format: {e}")
+                                except Exception as e:
+                                    st.error(f"Error saving memory: {e}")
+
+                        with col2:
+                            if st.button("Cancel", type="secondary"):
+                                st.session_state[edit_key] = False
+                                st.rerun()
+
+                        with col3:
+                            st.caption("Make sure to use valid JSON format before saving")
+
                 except Exception as e:
                     st.error(f"Could not load memory.json: {e}")
             container = chat_tab

@@ -28,10 +28,5 @@ Create a separate response with a CAC to LTV analysis by each acquisition channe
 - Churned customers should be customers who were active subscribers between Jan 2023 and Dec 2023 and churned during that period and should not include customers who joined after Jan 2023 since we want the churn rate for customers who were active on Jan 2023 and not new customers who joined after Jan 2023
 
 ## Formatting Requirements:
-- Present all results in markdown format with tables
-- For each analysis, create separate markdown tables with columns for monthly, annual and total where applicable
 - Round all monetary values to 2 decimal places and percentages to 4 decimal places
 - For LTV/CAC ratio analysis, consider ratios >= 3.0x as Excellent, >= 2.0x as Good, >= 1.0x as Break-even, and < 1.0x as Unprofitable
-- Use clear section headers and organize data in well-structured markdown tables
-
-DO NOT STOP UNTIL YOU HAVE COMPLETED THE WHOLE ENTIRE TASK.

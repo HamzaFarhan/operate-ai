@@ -6,7 +6,6 @@ import os
 import re
 import shutil
 import tempfile
-from collections.abc import Hashable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -33,8 +32,7 @@ load_dotenv()
 logfire.configure()
 
 SQL_TIMEOUT_SECONDS = 5
-PREVIEW_ROWS = 2
-RUN_SQL_PREVIEW_ROWS = 2
+MAX_ANALYSIS_FILE_TOKENS = 20_000
 MAX_RETRIES = 10
 MEMORY_FILE_PATH = os.getenv("MEMORY_FILE_PATH", "memory.json")
 STEP_LIMIT = 100
@@ -130,14 +128,153 @@ def add_current_time() -> str:
     return f"<current_time>\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n</current_time>"
 
 
-def preview_csv(df: Path | pd.DataFrame, num_rows: int = PREVIEW_ROWS) -> list[dict[Hashable, Any]]:
+# def preview_csv(df: Path | pd.DataFrame, num_rows: int = PREVIEW_ROWS) -> list[dict[Hashable, Any]]:
+#     """
+#     Returns the first `num_rows` rows of the specified CSV file.
+#     Should be used for previewing the data.
+#     """
+#     if isinstance(df, pd.DataFrame):
+#         return df.head(num_rows).to_dict(orient="records")  # type: ignore
+#     return pd.read_csv(df).head(num_rows).to_dict(orient="records")  # type: ignore
+
+
+def csv_summary(
+    df: Path | pd.DataFrame, top_n_categorical: int = 5, sample_size_for_type_inference: int = 1000
+) -> dict[str, Any]:
     """
-    Returns the first `num_rows` rows of the specified CSV file.
-    Should be used for previewing the data.
+    Generates a comprehensive summary of a Pandas DataFrame.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to summarize.
+        top_n_categorical (int): The number of most frequent values to show for categorical columns.
+        sample_size_for_type_inference (int): Number of non-null rows to sample for more robust type inference especially for 'object' columns.
+    Returns:
+        dict: A dictionary containing the summary information.
     """
-    if isinstance(df, pd.DataFrame):
-        return df.head(num_rows).to_dict(orient="records")  # type: ignore
-    return pd.read_csv(df).head(num_rows).to_dict(orient="records")  # type: ignore
+    file_name = ""
+    if isinstance(df, Path):
+        file_name = df.name
+        df = pd.read_csv(df)  # type: ignore
+    if df.empty:
+        return {
+            "file_level_summary": {
+                "file_name": file_name,
+                "shape": (0, 0),
+                "memory_usage_mb": 0.0,
+                "total_rows": 0,
+                "total_columns": 0,
+                "notes": "DataFrame is empty.",
+            },
+            "column_summaries": [],
+        }
+
+    summary = {}
+
+    # 1. File-Level Summary
+    total_rows, total_columns = df.shape
+
+    summary["file_level_summary"] = {
+        "shape": (total_rows, total_columns),
+        "total_rows": total_rows,
+        "total_columns": total_columns,
+    }
+
+    # 2. Column-Specific Summaries
+    column_summaries = []
+    for col_name in df.columns:
+        col_data = df[col_name]  # type: ignore
+        col_summary = {}
+
+        col_summary["column_name"] = col_name
+        col_summary["original_dtype"] = str(col_data.dtype)
+
+        # Missing values
+        missing_count = col_data.isnull().sum()  # type: ignore
+        col_summary["missing_values_count"] = int(missing_count)
+        col_summary["missing_values_percentage"] = (
+            round((missing_count / total_rows) * 100, 2) if total_rows > 0 else 0
+        )
+
+        # Unique values
+        try:
+            # nunique() can be slow on very large object columns with many uniques.
+            # If performance is an issue on huge datasets, consider sampling or alternative methods.
+            unique_count = col_data.nunique()
+            col_summary["unique_values_count"] = int(unique_count)
+        except Exception:  # Handle cases like lists in cells which are not hashable
+            col_summary["unique_values_count"] = "Error calculating (possibly unhashable type)"
+
+        # Attempt more robust type inference for object columns
+        inferred_type = str(col_data.dtype)
+        if col_data.dtype == "object" and not col_data.isnull().all():  # type: ignore
+            # Try to infer if it's numeric, datetime, or truly categorical
+            sample_data = col_data.dropna().sample(  # type: ignore
+                min(len(col_data.dropna()), sample_size_for_type_inference),  # type: ignore
+                random_state=42,  # type: ignore
+            )
+            try:
+                pd.to_numeric(sample_data)  # type: ignore
+                inferred_type = "numeric (inferred from object)"
+            except (ValueError, TypeError):
+                try:
+                    pd.to_datetime(sample_data)  # type: ignore
+                    inferred_type = "datetime (inferred from object)"
+                except (ValueError, TypeError):
+                    inferred_type = "categorical/string (inferred from object)"
+        elif pd.api.types.is_datetime64_any_dtype(col_data):  # type: ignore
+            inferred_type = "datetime"
+        elif pd.api.types.is_numeric_dtype(col_data):  # type: ignore
+            inferred_type = "numeric"
+        elif pd.api.types.is_bool_dtype(col_data):  # type: ignore
+            inferred_type = "boolean"
+
+        col_summary["inferred_best_dtype"] = inferred_type
+
+        # Type-specific stats
+        if "numeric" in inferred_type and not col_data.isnull().all():  # type: ignore
+            # Ensure data is actually numeric before describing
+            numeric_col_data = pd.to_numeric(col_data, errors="coerce").dropna()  # type: ignore
+            if not numeric_col_data.empty:
+                desc = numeric_col_data.describe()  # type: ignore
+                col_summary["numeric_stats"] = {
+                    "mean": round(desc.get("mean", float("nan")), 3),  # type: ignore
+                    "std_dev": round(desc.get("std", float("nan")), 3),  # type: ignore
+                    "min": round(desc.get("min", float("nan")), 3),  # type: ignore
+                    "25th_percentile": round(desc.get("25%", float("nan")), 3),  # type: ignore
+                    "median_50th_percentile": round(desc.get("50%", float("nan")), 3),  # type: ignore
+                    "75th_percentile": round(desc.get("75%", float("nan")), 3),  # type: ignore
+                    "max": round(desc.get("max", float("nan")), 3),  # type: ignore
+                }
+        elif "datetime" in inferred_type and not col_data.isnull().all():  # type: ignore
+            datetime_col_data = pd.to_datetime(col_data, errors="coerce").dropna()  # type: ignore
+            if not datetime_col_data.empty:
+                col_summary["datetime_stats"] = {
+                    "min_date": str(datetime_col_data.min()),  # type: ignore
+                    "max_date": str(datetime_col_data.max()),  # type: ignore
+                }
+        elif "boolean" in inferred_type and not col_data.isnull().all():  # type: ignore
+            col_summary["boolean_stats"] = col_data.dropna().astype(bool).value_counts().to_dict()  # type: ignore
+        elif "categorical/string" in inferred_type and not col_data.isnull().all():  # type: ignore
+            # For object/categorical columns
+            if unique_count <= total_rows * 0.8 and unique_count > 0:  # type: ignore
+                counts = col_data.value_counts(normalize=False).head(top_n_categorical)
+                col_summary["categorical_stats"] = {
+                    "top_n_values": {str(k): int(v) for k, v in counts.items()},
+                    "is_highly_cardinal": unique_count > 50  # type: ignore
+                    and unique_count / total_rows > 0.1,  # type: ignore
+                }
+            else:  # Likely free text or IDs
+                col_summary["categorical_stats"] = {
+                    "note": "High cardinality or mostly unique string values. Not showing top N.",
+                    "is_highly_cardinal": True,
+                }
+        elif col_data.isnull().all():  # type: ignore
+            col_summary["note"] = "Column is entirely empty (all NaN)."
+
+        column_summaries.append(col_summary)  # type: ignore
+
+    summary["column_summaries"] = column_summaries
+    return summary  # type: ignore
 
 
 def list_csv_files(ctx: RunContext[AgentDeps]) -> str:
@@ -147,9 +284,7 @@ def list_csv_files(ctx: RunContext[AgentDeps]) -> str:
     csv_files = [file.expanduser().resolve() for file in Path(ctx.deps.data_dir).glob("*.csv")]
     res = "\n<available_csv_files>\n"
     for file in csv_files:
-        res += str(file) + "\n"
-        res += f"First {PREVIEW_ROWS} rows for preview:\n"
-        res += json.dumps(preview_csv(df=file, num_rows=PREVIEW_ROWS)) + "\n\n"
+        res += json.dumps(csv_summary(df=file)) + "\n\n"
     return res.strip() + "\n</available_csv_files>"
 
 
@@ -160,9 +295,7 @@ def list_analysis_files(ctx: RunContext[AgentDeps]) -> str:
     csv_files = [file.expanduser().resolve() for file in Path(ctx.deps.analysis_dir).glob("*.csv")]
     res = "\n<available_analysis_files>\n"
     for file in csv_files:
-        res += str(file) + "\n"
-        res += f"First {PREVIEW_ROWS} rows for preview:\n"
-        res += json.dumps(preview_csv(df=file, num_rows=PREVIEW_ROWS)) + "\n\n"
+        res += json.dumps(csv_summary(df=file)) + "\n\n"
     return res.strip() + "\n</available_analysis_files>"
 
 
@@ -176,7 +309,6 @@ class RunSQL(BaseModel):
     """
     1. Runs an SQL query on csv file(s) using duckdb
     2. Writes the full result to disk
-    3. Returns a ResultHandle with a small in-memory preview.
     """
 
     purpose: str = Field(
@@ -192,10 +324,6 @@ class RunSQL(BaseModel):
             "Example: 'select names from read_csv('workspaces/1/data/orders.csv')'"
         )
     )
-    # preview_rows: int = Field(
-    #     default=RUN_SQL_PREVIEW_ROWS,
-    #     description="Number of rows to preview. 2-5 should be enough for most queries.",
-    # )
     file_name: str | None = Field(
         description=(
             "Descriptive name of the file based on the query to save the result to in the `analysis_dir`.\n"
@@ -218,17 +346,12 @@ class RunSQLResult(BaseModel):
     purpose: str | None = None
     sql_path: str
     csv_path: str
-    row_count: int
-    preview: list[dict[str, Any]]
+    summary: dict[str, Any]
     is_task_result: bool = False
 
 
 async def run_sql(
-    analysis_dir: str,
-    query: str,
-    preview_rows: int = RUN_SQL_PREVIEW_ROWS,
-    file_name: str | None = None,
-    is_task_result: bool = False,
+    analysis_dir: str, query: str, file_name: str | None = None, is_task_result: bool = False
 ) -> RunSQLResult:
     def check_csv_files_exist(paths: list[str]) -> None:
         """Check if all CSV files in the paths exist."""
@@ -264,8 +387,7 @@ async def run_sql(
         return RunSQLResult(
             sql_path=str(file_path.with_suffix(".sql")),
             csv_path=str(file_path),
-            preview=preview_csv(df=df, num_rows=preview_rows),  # type: ignore
-            row_count=len(df),
+            summary=csv_summary(df=df),
             is_task_result=is_task_result,
         )
 
@@ -279,6 +401,26 @@ async def run_sql(
         raise ModelRetry(str(e))
 
 
+def load_analysis_file(ctx: RunContext[AgentDeps], file_name: str) -> list[dict[str, Any]]:
+    """
+    Loads an analysis file from the `analysis_dir`.
+    """
+    file_path = Path(ctx.deps.analysis_dir) / Path(file_name).name
+    records = pd.read_csv(file_path).to_dict(orient="records")  # type: ignore
+    tokens = len(json.dumps(records)) / 4
+    if tokens > MAX_ANALYSIS_FILE_TOKENS:
+        raise ModelRetry(
+            (
+                f"The file {file_name} is too large. It has approx {tokens} tokens.\n "
+                f"We can only load files with less than {MAX_ANALYSIS_FILE_TOKENS} tokens.\n"
+                f"File Summary:\n{csv_summary(df=file_path)}\n"
+                "Please try using your SQL expertise to get a smaller subset of the data. "
+                "If you have already tried that, let the user know with a helpful message."
+            )
+        )
+    return records  # type: ignore
+
+
 @dataclass
 class RunSQLNode(BaseNode[GraphState, GraphDeps, RunSQLResult]):
     """Run 'run_sql' tool."""
@@ -286,7 +428,6 @@ class RunSQLNode(BaseNode[GraphState, GraphDeps, RunSQLResult]):
     docstring_notes = True
     purpose: str
     query: str
-    preview_rows: int = RUN_SQL_PREVIEW_ROWS
     file_name: str | None = None
     is_task_result: bool = False
 
@@ -295,7 +436,6 @@ class RunSQLNode(BaseNode[GraphState, GraphDeps, RunSQLResult]):
             sql_result = await run_sql(
                 analysis_dir=ctx.deps.agent_deps.analysis_dir,
                 query=self.query,
-                preview_rows=self.preview_rows,
                 file_name=self.file_name,
                 is_task_result=self.is_task_result,
             )
@@ -535,7 +675,14 @@ def create_agent(
         instructions=[*prompts, add_current_time, add_dirs],
         deps_type=AgentDeps,
         retries=MAX_RETRIES,
-        tools=[list_csv_files, list_analysis_files, calculate_sum, calculate_difference, calculate_mean],
+        tools=[
+            list_csv_files,
+            list_analysis_files,
+            load_analysis_file,
+            calculate_sum,
+            calculate_difference,
+            calculate_mean,
+        ],
         mcp_servers=mcp_servers,
         output_type=output_types,
         instrument=True,
@@ -588,7 +735,6 @@ class RunAgentNode(BaseNode[GraphState, GraphDeps, RunSQLResult | WriteDataToExc
                     return RunSQLNode(
                         purpose=res.output.purpose,
                         query=res.output.query,
-                        # preview_rows=res.output.preview_rows,
                         file_name=res.output.file_name,
                         is_task_result=res.output.is_task_result,
                     )

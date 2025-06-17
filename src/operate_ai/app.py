@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import httpx
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
 from loguru import logger
@@ -16,6 +17,7 @@ from pydantic import ValidationError
 
 from operate_ai.api import ChatMessage, ThreadInfo, WorkspaceInfo
 from operate_ai.cfo_graph import RunSQLResult, WriteDataToExcelResult
+from operate_ai.memory_tools import KnowledgeGraph
 
 load_dotenv()
 
@@ -128,6 +130,140 @@ def parse_response(resp: Any) -> RunSQLResult | WriteDataToExcelResult | str:
     return str(resp)  # type: ignore
 
 
+def create_graph_visualization(kg: KnowledgeGraph):
+    """Create a plotly visualization of the knowledge graph."""
+    if not kg.entities:
+        return None
+
+    try:
+        # Convert to NetworkX graph
+        G = kg.to_networkx()
+
+        # Get node positions using spring layout
+        import networkx as nx
+
+        pos = nx.spring_layout(G, seed=42, k=1, iterations=50)
+
+        # Separate entities and observations for different styling
+        entity_nodes = [node for node, data in G.nodes(data=True) if data.get("node_type") == "entity"]
+        observation_nodes = [node for node, data in G.nodes(data=True) if data.get("node_type") == "observation"]
+
+        # Create edge traces
+        edge_x = []
+        edge_y = []
+        edge_info = []
+
+        for edge in G.edges(data=True):
+            x0, y0 = pos[edge[0]]
+            x1, y1 = pos[edge[1]]
+            edge_x.extend([x0, x1, None])
+            edge_y.extend([y0, y1, None])
+
+            # Add edge info for hover
+            edge_type = edge[2].get("edge_type", "unknown")
+            if edge_type == "relation":
+                relation_type = edge[2].get("relation_type", "unknown")
+                edge_info.append(f"{edge[0]} → {edge[1]} ({relation_type})")
+            else:
+                edge_info.append(f"{edge[0]} → {edge[1]} ({edge_type})")
+
+        edge_trace = go.Scatter(
+            x=edge_x, y=edge_y, line=dict(width=1, color="#888"), hoverinfo="none", mode="lines"
+        )
+
+        # Create entity node trace
+        entity_x = [pos[node][0] for node in entity_nodes]
+        entity_y = [pos[node][1] for node in entity_nodes]
+        entity_text = []
+        entity_hover = []
+
+        for node in entity_nodes:
+            node_data = G.nodes[node]
+            entity_text.append(node_data["name"])
+
+            # Create hover text with entity info
+            hover_text = f"<b>{node_data['name']}</b><br>"
+            hover_text += f"Type: {node_data['entity_type']}<br>"
+
+            # Add observations from the original knowledge graph
+            if node in kg.entities:
+                entity = kg.entities[node]
+                if entity.observations:
+                    hover_text += f"Observations: {len(entity.observations)}<br>"
+                    # Show first few observations
+                    for i, obs in enumerate(entity.observations[:3]):
+                        hover_text += f"• {obs}<br>"
+                    if len(entity.observations) > 3:
+                        hover_text += f"... and {len(entity.observations) - 3} more"
+
+            entity_hover.append(hover_text)
+
+        entity_trace = go.Scatter(
+            x=entity_x,
+            y=entity_y,
+            mode="markers+text",
+            hoverinfo="text",
+            hovertext=entity_hover,
+            text=entity_text,
+            textposition="middle center",
+            marker=dict(size=20, color="lightblue", line=dict(width=2, color="darkblue")),
+        )
+
+        # Create observation node trace
+        obs_x = [pos[node][0] for node in observation_nodes]
+        obs_y = [pos[node][1] for node in observation_nodes]
+        obs_text = []
+        obs_hover = []
+
+        for node in observation_nodes:
+            node_data = G.nodes[node]
+            obs_text.append("📝")  # Small icon for observations
+            obs_hover.append(f"<b>Observation</b><br>{node_data['observation']}")
+
+        obs_trace = go.Scatter(
+            x=obs_x,
+            y=obs_y,
+            mode="markers+text",
+            hoverinfo="text",
+            hovertext=obs_hover,
+            text=obs_text,
+            textposition="middle center",
+            marker=dict(size=10, color="lightgreen", line=dict(width=1, color="darkgreen")),
+        )
+
+        # Create the figure
+        fig = go.Figure(data=[edge_trace, entity_trace, obs_trace])
+
+        fig.update_layout(
+            title=dict(text="Knowledge Graph Visualization", font=dict(size=16)),
+            showlegend=False,
+            hovermode="closest",
+            margin=dict(b=20, l=5, r=5, t=40),
+            annotations=[
+                dict(
+                    text="Entities are shown in blue, observations in green. Hover for details.",
+                    showarrow=False,
+                    xref="paper",
+                    yref="paper",
+                    x=0.005,
+                    y=-0.002,
+                    xanchor="left",
+                    yanchor="bottom",
+                    font=dict(color="gray", size=12),
+                )
+            ],
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            plot_bgcolor="white",
+        )
+
+        return fig
+
+    except Exception as e:
+        logger.error(f"Error creating graph visualization: {e}")
+        return None
+
+
 async def main():
     # Initialize session state
     if "workspace_id" not in st.session_state:
@@ -234,52 +370,87 @@ async def main():
                 try:
                     mem = json.loads(memory_path.read_text())
 
-                    # Initialize edit mode state
-                    edit_key = f"edit_memory_{workspace_id}"
-                    if edit_key not in st.session_state:
-                        st.session_state[edit_key] = False
+                    # Try to load as KnowledgeGraph for visualization
+                    try:
+                        kg = KnowledgeGraph.model_validate(mem)
 
-                    if not st.session_state[edit_key]:
-                        # Display mode - show formatted JSON
-                        st.json(mem)
+                        # Create tabs for different views
+                        graph_tab, json_tab = st.tabs(["Graph View", "JSON View"])
 
-                        col1, col2 = st.columns([1, 4])
-                        with col1:
-                            if st.button("Edit Memory", type="secondary"):
-                                st.session_state[edit_key] = True
-                                st.rerun()
-                    else:
-                        # Edit mode - show text area
-                        edited_json = st.text_area(
-                            "Edit Memory (JSON format)",
-                            value=json.dumps(mem, indent=2),
-                            height=800,
-                            key=f"memory_editor_{workspace_id}",
-                        )
+                        with graph_tab:
+                            if kg.entities:
+                                fig = create_graph_visualization(kg)
+                                if fig:
+                                    st.plotly_chart(fig, use_container_width=True)
+                                else:
+                                    st.error("Could not create graph visualization")
 
-                        col1, col2, col3 = st.columns([0.05, 0.05, 0.9])
-                        with col1:
-                            if st.button("Save", type="primary"):
-                                try:
-                                    # Validate JSON format
-                                    parsed_json = json.loads(edited_json)
-                                    # Write back to file
-                                    memory_path.write_text(json.dumps(parsed_json, indent=2))
-                                    st.session_state[edit_key] = False
-                                    st.success("Memory saved successfully!")
-                                    st.rerun()
-                                except json.JSONDecodeError as e:
-                                    st.error(f"Invalid JSON format: {e}")
-                                except Exception as e:
-                                    st.error(f"Error saving memory: {e}")
+                                # Show some stats
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("Entities", len(kg.entities))
+                                with col2:
+                                    st.metric("Relations", len(kg.relations))
+                                with col3:
+                                    total_observations = sum(
+                                        len(entity.observations) for entity in kg.entities.values()
+                                    )
+                                    st.metric("Observations", total_observations)
+                            else:
+                                st.info("No entities in memory graph yet")
 
-                        with col2:
-                            if st.button("Cancel", type="secondary"):
+                        with json_tab:
+                            # Initialize edit mode state
+                            edit_key = f"edit_memory_{workspace_id}"
+                            if edit_key not in st.session_state:
                                 st.session_state[edit_key] = False
-                                st.rerun()
 
-                        with col3:
-                            st.caption("Make sure to use valid JSON format before saving")
+                            if not st.session_state[edit_key]:
+                                # Display mode - show formatted JSON
+                                st.json(mem)
+
+                                col1, col2 = st.columns([1, 4])
+                                with col1:
+                                    if st.button("Edit Memory", type="secondary"):
+                                        st.session_state[edit_key] = True
+                                        st.rerun()
+                            else:
+                                # Edit mode - show text area
+                                edited_json = st.text_area(
+                                    "Edit Memory (JSON format)",
+                                    value=json.dumps(mem, indent=2),
+                                    height=800,
+                                    key=f"memory_editor_{workspace_id}",
+                                )
+
+                                col1, col2, col3 = st.columns([0.05, 0.05, 0.9])
+                                with col1:
+                                    if st.button("Save", type="primary"):
+                                        try:
+                                            # Validate JSON format
+                                            parsed_json = json.loads(edited_json)
+                                            # Write back to file
+                                            memory_path.write_text(json.dumps(parsed_json, indent=2))
+                                            st.session_state[edit_key] = False
+                                            st.success("Memory saved successfully!")
+                                            st.rerun()
+                                        except json.JSONDecodeError as e:
+                                            st.error(f"Invalid JSON format: {e}")
+                                        except Exception as e:
+                                            st.error(f"Error saving memory: {e}")
+
+                                with col2:
+                                    if st.button("Cancel", type="secondary"):
+                                        st.session_state[edit_key] = False
+                                        st.rerun()
+
+                                with col3:
+                                    st.caption("Make sure to use valid JSON format before saving")
+
+                    except Exception:
+                        # Fallback to JSON view if not a valid KnowledgeGraph
+                        st.warning("Memory data is not in KnowledgeGraph format, showing JSON view")
+                        st.json(mem)
 
                 except Exception as e:
                     st.error(f"Could not load memory.json: {e}")

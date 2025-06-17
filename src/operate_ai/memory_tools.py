@@ -70,6 +70,46 @@ class KnowledgeGraph(BaseModel):
         validate_relations(self.entities, self.relations)
         return self
 
+    def to_networkx(self):
+        """
+        Convert the knowledge graph to a NetworkX graph.
+
+        Returns
+        -------
+        networkx.DiGraph
+            A directed graph where:
+            - Entities are nodes with attributes (name, entity_type, node_type='entity')
+            - Observations are nodes connected to their parent entities
+            - Relations are edges between entities
+        """
+        try:
+            import networkx as nx
+        except ImportError:
+            raise ImportError("NetworkX is required for this method. Install with: uv add networkx")
+
+        G = nx.DiGraph()
+
+        # Add entity nodes
+        for entity_name, entity in self.entities.items():
+            G.add_node(entity_name, node_type="entity", entity_type=entity.entity_type, name=entity.name)
+
+            # Add observation nodes and connect them to the entity
+            for i, obs in enumerate(entity.observations):
+                obs_node_id = f"{entity_name}__obs_{i}"
+                G.add_node(obs_node_id, node_type="observation", observation=obs, parent_entity=entity_name)
+                G.add_edge(entity_name, obs_node_id, edge_type="has_observation")
+
+        # Add relation edges between entities
+        for relation in self.relations.values():
+            G.add_edge(
+                relation.relation_from,
+                relation.relation_to,
+                edge_type="relation",
+                relation_type=relation.relation_type,
+            )
+
+        return G
+
 
 async def save_knowledge_graph(graph: KnowledgeGraph) -> None:
     """

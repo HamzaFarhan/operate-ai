@@ -27,8 +27,8 @@ cd /opt/apps-demo/operateai-app/excel-mcp-server && git pull && cd /opt/apps-dem
 
 
 # Check logs:
-docker logs -f operateai-bkend-app
-docker logs -f operateai-ui-app
+docker logs -f /opt/apps-demo/operateai-app/operateai-bkend-app
+docker logs -f /opt/apps-demo/operateai-app/operateai-ui-app
 
 
 https://operateai.dreamai.io/

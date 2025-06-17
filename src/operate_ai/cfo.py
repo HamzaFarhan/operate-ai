@@ -224,7 +224,16 @@ async def run_sql(
             logger.info(f"Found CSV files in query: {csv_paths}")
             check_csv_files_exist(csv_paths)
 
-        df: pd.DataFrame = duckdb.sql(query_replaced).df()  # type: ignore
+        try:
+            df: pd.DataFrame = duckdb.sql(query_replaced).df()  # type: ignore
+        except Exception as e:
+            # Handle transaction rollback for DuckDB transaction errors
+            try:
+                duckdb.sql("ROLLBACK")
+                logger.info("Rolled back DuckDB transaction after error")
+            except Exception:
+                pass  # Rollback might fail if no transaction is active
+            raise e
 
         file_path = (
             Path(analysis_dir) / Path(file_name).name if file_name else temp_file_path(file_dir=analysis_dir)

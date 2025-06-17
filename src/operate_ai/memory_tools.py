@@ -91,17 +91,17 @@ class KnowledgeGraph(BaseModel):
 
         # Add entity nodes
         for entity_name, entity in self.entities.items():
-            G.add_node(entity_name, node_type="entity", entity_type=entity.entity_type, name=entity.name)
+            G.add_node(entity_name, node_type="entity", entity_type=entity.entity_type, name=entity.name)  # type: ignore
 
             # Add observation nodes and connect them to the entity
             for i, obs in enumerate(entity.observations):
                 obs_node_id = f"{entity_name}__obs_{i}"
-                G.add_node(obs_node_id, node_type="observation", observation=obs, parent_entity=entity_name)
-                G.add_edge(entity_name, obs_node_id, edge_type="has_observation")
+                G.add_node(obs_node_id, node_type="observation", observation=obs, parent_entity=entity_name)  # type: ignore
+                G.add_edge(entity_name, obs_node_id, edge_type="has_observation")  # type: ignore
 
         # Add relation edges between entities
         for relation in self.relations.values():
-            G.add_edge(
+            G.add_edge(  # type: ignore
                 relation.relation_from,
                 relation.relation_to,
                 edge_type="relation",

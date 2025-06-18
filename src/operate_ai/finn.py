@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -434,6 +433,7 @@ class AgentDeps:
         self.results_dir = self.thread_dir / "results"
         self.memory_file_path = self.workspace_dir / MEMORY_FILE_NAME
         self.message_history_path = self.thread_dir / "message_history.json"
+        self.plan_path = self.thread_dir / "plan.md"
         self.data_dir = self.workspace_dir / "data"
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -452,6 +452,92 @@ def add_dirs(ctx: RunContext[AgentDeps]) -> str:
 
 def add_current_time() -> str:
     return f"<current_time>\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n</current_time>"
+
+
+def create_sequential_plan(ctx: RunContext[AgentDeps], initial_plan: str) -> str:
+    """Creates a new sequential methodology plan file with user-approved systematic analysis steps.
+
+    This creates a new plan.md file containing the SEQUENTIAL METHODOLOGY steps that were presented to the user during systematic planning and approved by them. These are the atomic, unambiguous, sequential steps that you will follow to complete the financial analysis. Users can view and edit this file.
+
+    Use this after user has approved your systematic analysis plan from the planning phase.
+
+    Args:
+        initial_plan: The user-approved sequential methodology steps formatted as markdown.
+            These should be the same steps from your systematic planning that the user confirmed.
+
+    Returns:
+        str: A formatted string containing the created plan content wrapped in XML tags.
+
+    Example:
+        create_sequential_plan("## SEQUENTIAL METHODOLOGY (User Approved)\n1. Data preparation: Filter active customers using subscription table\n2. Base calculation: Calculate monthly revenue per customer cohort\n3. Final output: Generate cohort analysis table with retention metrics")
+    """
+    plan_file = ctx.deps.plan_path
+    plan_file.write_text(initial_plan)
+    return f"<sequential_plan>\nCreated new plan file at: {plan_file}\n\n{initial_plan}\n</sequential_plan>"
+
+
+def update_sequential_plan_step(ctx: RunContext[AgentDeps], old_text: str, new_text: str) -> str:
+    """Updates existing content in the user-approved sequential methodology plan file.
+
+    This replaces specific text in the existing plan file containing the SEQUENTIAL METHODOLOGY steps that were approved by the user. Commonly used to mark steps as completed during analysis execution, update step descriptions, or modify existing methodology steps. Only replaces the first occurrence for precision.
+
+    Use this during analysis execution to track progress on the user-approved systematic plan.
+
+    Args:
+        old_text: The exact text to find and replace in the plan file.
+        new_text: The replacement text.
+
+    Returns:
+        str: A formatted string containing the updated plan content wrapped in XML tags.
+
+    Examples:
+        # Mark a step as completed during execution
+        update_sequential_plan_step("1. Data preparation: Filter active customers", "1. Data preparation: Filter active customers - ✓ COMPLETED")
+
+        # Update step with more specific business logic
+        update_sequential_plan_step("2. Base calculation: Calculate revenue metrics", "2. Base calculation: Calculate MRR using active customer count × ARPU")
+    """
+    plan_file = ctx.deps.plan_path
+
+    if not plan_file.exists():
+        raise ModelRetry(f"Plan file does not exist at: {plan_file}")
+
+    current_content = plan_file.read_text()
+
+    if old_text not in current_content:
+        return f"<sequential_plan>\nText not found in plan: '{old_text}'\n\nCurrent plan:\n{current_content}\n</sequential_plan>"
+
+    updated_content = current_content.replace(old_text, new_text, 1)  # Replace only first occurrence
+    plan_file.write_text(updated_content)
+
+    return f"<sequential_plan>\nUpdated plan step successfully.\n\n{updated_content}\n</sequential_plan>"
+
+
+def append_sequential_plan_step(ctx: RunContext[AgentDeps], new_step: str) -> str:
+    """Appends a new step to the user-approved sequential methodology plan file.
+
+    This adds a new step to the end of the existing plan file containing the SEQUENTIAL METHODOLOGY steps that were approved by the user. Use this when you discover during analysis execution that additional methodology steps are needed that weren't in the original user-approved plan, or when expanding the analysis scope based on findings.
+
+    Args:
+        new_step: The new methodology step to append to the plan. Should be properly formatted
+            and follow the atomic, sequential pattern (e.g., "6. Validate results against business logic").
+
+    Returns:
+        str: A formatted string containing the updated plan content wrapped in XML tags.
+
+    Example:
+        append_sequential_plan_step("4. Validation step: Cross-check MRR calculations against transaction totals")
+    """
+    plan_file = ctx.deps.plan_path
+
+    if not plan_file.exists():
+        raise ModelRetry(f"Plan file does not exist at: {plan_file}")
+
+    current_content = plan_file.read_text()
+    updated_content = current_content.rstrip() + "\n" + new_step + "\n"
+    plan_file.write_text(updated_content)
+
+    return f"<sequential_plan>\nAppended new step to plan.\n\n{updated_content}\n</sequential_plan>"
 
 
 def _list_csv_files(dir: Path) -> str:
@@ -654,6 +740,9 @@ def create_agent(
             calculate_sum,
             calculate_difference,
             calculate_mean,
+            create_sequential_plan,
+            update_sequential_plan_step,
+            append_sequential_plan_step,
         ],
         mcp_servers=mcp_servers,
         output_type=output_types,
@@ -697,19 +786,3 @@ async def thread(
     agent_deps.message_history_path.write_bytes(to_json(res.all_messages()))
 
     return res.output
-
-
-def setup_workspace(data_dir: Path | str, workspace_dir: Path | str, delete_existing: bool = False):
-    data_dir = Path(data_dir)
-    workspace_dir = Path(workspace_dir)
-    if workspace_dir.exists() and delete_existing:
-        shutil.rmtree(workspace_dir)
-        logger.info(f"Removed {workspace_dir}")
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-    workspace_data_dir = workspace_dir / "data"
-    if data_dir.exists():
-        try:
-            shutil.copytree(data_dir, workspace_data_dir, dirs_exist_ok=True)
-            logger.success(f"Copied data from {data_dir} to {workspace_data_dir}")
-        except Exception as e:
-            raise RuntimeError(f"Failed to copy data from {data_dir} to {workspace_data_dir}: {e}") from e

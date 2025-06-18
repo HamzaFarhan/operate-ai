@@ -31,10 +31,10 @@ load_dotenv()
 
 logfire.configure()
 
-SQL_TIMEOUT_SECONDS = 5
+SQL_TIMEOUT_SECONDS = 10
 MAX_ANALYSIS_FILE_TOKENS = 20_000
 MAX_RETRIES = 10
-MEMORY_FILE_PATH = os.getenv("MEMORY_FILE_PATH", "memory.json")
+MEMORY_FILE_NAME = os.getenv("MEMORY_FILE_NAME", "memory.json")
 STEP_LIMIT = 100
 MODULE_DIR = Path(__file__).parent
 
@@ -328,15 +328,37 @@ def csv_summary(
                     else None,
                 }
 
+                # Enhanced date format detection
+                try:
+                    date_format_info = asyncio.run(detect_date_format_and_parse(file_path, col_name))
+                except Exception as e:
+                    date_format_info = {"error": f"Date format detection failed: {str(e)}"}
+
+                if "error" not in date_format_info:
+                    col_summary["datetime_stats"]["format_detection"] = date_format_info
+                    col_summary["datetime_stats"]["recommended_sql_cast"] = (
+                        date_format_info["date_format"]
+                        if date_format_info.get("duckdb_format")
+                        else f"strptime(\"{col_name}\", '{date_format_info['date_format']}')"
+                    )
+                else:
+                    col_summary["datetime_stats"]["format_detection"] = date_format_info
+
                 # Time series analysis
                 if non_null_count > 10:
                     try:
+                        # Use detected format if available
+                        if "error" not in date_format_info and date_format_info.get("duckdb_format"):
+                            date_cast = date_format_info["date_format"]
+                        else:
+                            date_cast = f'TRY_CAST("{col_name}" AS DATE)'
+
                         date_dist_query = f"""
                         SELECT 
-                            EXTRACT(YEAR FROM TRY_CAST("{col_name}" AS DATE)) as year,
+                            EXTRACT(YEAR FROM {date_cast}) as year,
                             COUNT(*) as count
                         FROM read_csv('{file_path}')
-                        WHERE TRY_CAST("{col_name}" AS DATE) IS NOT NULL
+                        WHERE {date_cast} IS NOT NULL
                         GROUP BY year
                         ORDER BY year
                         """
@@ -752,6 +774,158 @@ def calculate_mean(values: list[float]) -> float:
     return sum(values) / len(values)
 
 
+def get_date_cast_expression(ctx: RunContext[AgentDeps], csv_file: str, column_name: str) -> str:
+    """
+    Get the proper SQL expression to cast a date column based on detected format.
+
+    Args:
+        csv_file: Name of the CSV file (will be resolved from data_dir)
+        column_name: Name of the date column
+
+    Returns:
+        SQL expression to properly cast the date column
+    """
+    # Resolve full path
+    csv_path = str(Path(ctx.deps.data_dir) / csv_file)
+
+    # Detect date format with timeout protection
+    try:
+        format_info = asyncio.run(detect_date_format_and_parse(csv_path, column_name))
+    except Exception as e:
+        return f'TRY_CAST("{column_name}" AS DATE)  -- Date detection failed: {str(e)}'
+
+    if "error" in format_info:
+        return f'TRY_CAST("{column_name}" AS DATE)  -- Format detection failed: {format_info["error"]}'
+
+    if format_info.get("duckdb_format"):
+        return format_info["date_format"].format(col=column_name)
+    else:
+        return f"strptime(\"{column_name}\", '{format_info['date_format']}')"
+
+
+def parse_date_reference(date_ref: str) -> dict[str, str]:
+    """
+    Parse date reference consistently according to CFO standards.
+
+    Args:
+        date_ref: Date reference like "Jan 2023", "Q1 2023", "2023"
+
+    Returns:
+        Dict with start_date, end_date, and interpretation_type
+    """
+    import re
+    from datetime import datetime
+
+    date_ref = date_ref.strip()
+
+    # Month Year patterns (Jan 2023, January 2023)
+    month_year_pattern = r"^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})$"
+    match = re.match(month_year_pattern, date_ref, re.IGNORECASE)
+    if match:
+        month_str, year_str = match.groups()
+
+        # Map month names to numbers
+        month_map = {
+            "jan": 1,
+            "january": 1,
+            "feb": 2,
+            "february": 2,
+            "mar": 3,
+            "march": 3,
+            "apr": 4,
+            "april": 4,
+            "may": 5,
+            "jun": 6,
+            "june": 6,
+            "jul": 7,
+            "july": 7,
+            "aug": 8,
+            "august": 8,
+            "sep": 9,
+            "september": 9,
+            "oct": 10,
+            "october": 10,
+            "nov": 11,
+            "november": 11,
+            "dec": 12,
+            "december": 12,
+        }
+
+        month_num = month_map[month_str.lower()]
+        year = int(year_str)
+
+        # Calculate last day of month
+        if month_num == 12:
+            next_month = datetime(year + 1, 1, 1)
+        else:
+            next_month = datetime(year, month_num + 1, 1)
+
+        from datetime import timedelta
+
+        last_day = (next_month - timedelta(days=1)).day
+
+        return {
+            "start_date": f"{year:04d}-{month_num:02d}-01",
+            "end_date": f"{year:04d}-{month_num:02d}-{last_day:02d}",
+            "interpretation_type": "full_month_period",
+        }
+
+    # Quarter patterns (Q1 2023, Q4 2023)
+    quarter_pattern = r"^Q([1-4])\s+(\d{4})$"
+    match = re.match(quarter_pattern, date_ref, re.IGNORECASE)
+    if match:
+        quarter, year_str = match.groups()
+        year = int(year_str)
+        quarter = int(quarter)
+
+        quarter_starts = {1: "01-01", 2: "04-01", 3: "07-01", 4: "10-01"}
+        quarter_ends = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}
+
+        return {
+            "start_date": f"{year:04d}-{quarter_starts[quarter]}",
+            "end_date": f"{year:04d}-{quarter_ends[quarter]}",
+            "interpretation_type": "full_quarter_period",
+        }
+
+    # Year patterns (2023)
+    year_pattern = r"^(\d{4})$"
+    match = re.match(year_pattern, date_ref)
+    if match:
+        year = int(match.group(1))
+        return {
+            "start_date": f"{year:04d}-01-01",
+            "end_date": f"{year:04d}-12-31",
+            "interpretation_type": "full_year_period",
+        }
+
+    # Point-in-time patterns
+    if date_ref.lower().startswith("as of ") or date_ref.lower().startswith("end of "):
+        base_ref = date_ref.lower().replace("as of ", "").replace("end of ", "").strip()
+        parsed = parse_date_reference(base_ref)
+        return {
+            "start_date": parsed["end_date"],
+            "end_date": parsed["end_date"],
+            "interpretation_type": "point_in_time_end",
+        }
+
+    if date_ref.lower().startswith("beginning of "):
+        base_ref = date_ref.lower().replace("beginning of ", "").strip()
+        parsed = parse_date_reference(base_ref)
+        return {
+            "start_date": parsed["start_date"],
+            "end_date": parsed["start_date"],
+            "interpretation_type": "point_in_time_start",
+        }
+
+    # If we can't parse it, return as-is with a warning
+    return {
+        "start_date": date_ref,
+        "end_date": date_ref,
+        "interpretation_type": "unparsed",
+        "warning": f"Could not parse date reference: {date_ref}. Please use explicit dates or standard formats like 'Jan 2023', 'Q1 2023', '2023'",
+    }
+
+
 class WriteSheetFromFile(BaseModel):
     """
     Creates an excel workbook and writes a sheet to it.
@@ -934,7 +1108,7 @@ def create_agent(
     memory_server = MCPServerStdio(
         command="uv",
         args=["run", str(MODULE_DIR / "memory_mcp.py")],
-        env={"MEMORY_FILE_PATH": str(Path(workspace_dir) / Path(MEMORY_FILE_PATH))},
+        env={"MEMORY_FILE_PATH": str(Path(workspace_dir) / Path(MEMORY_FILE_NAME))},
     )
     excel_server = MCPServerStdio(command="uvx", args=[str(MODULE_DIR / "../../../excel-mcp-server"), "stdio"])
     mcp_servers: list[MCPServerStdio] = []
@@ -961,6 +1135,8 @@ def create_agent(
             calculate_sum,
             calculate_difference,
             calculate_mean,
+            get_date_cast_expression,
+            parse_date_reference,
         ],
         mcp_servers=mcp_servers,
         output_type=output_types,
@@ -1213,6 +1389,168 @@ def setup_workspace(data_dir: Path | str, workspace_dir: Path | str, delete_exis
             logger.success(f"Copied data from {data_dir} to {workspace_data_dir}")
         except Exception as e:
             raise RuntimeError(f"Failed to copy data from {data_dir} to {workspace_data_dir}: {e}") from e
+
+
+async def detect_date_format_and_parse(csv_path: str, column_name: str) -> dict[str, Any]:
+    """
+    Detect date format and parse dates robustly with timeout protection.
+
+    Returns:
+        dict with date_format, min_date, max_date, successful_parse_count, total_count
+    """
+
+    async def _detect_with_timeout():
+        return _detect_date_format_sync(csv_path, column_name)
+
+    try:
+        return await asyncio.wait_for(_detect_with_timeout(), timeout=SQL_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        return {"error": f"Date format detection timed out after {SQL_TIMEOUT_SECONDS} seconds"}
+    except Exception as e:
+        return {"error": f"Date format detection failed: {str(e)}"}
+
+
+def _detect_date_format_sync(csv_path: str, column_name: str) -> dict[str, Any]:
+    """
+    Synchronous date format detection logic.
+    """
+    from datetime import datetime
+
+    # Common date formats to try
+    date_formats = [
+        "%Y-%m-%d",  # 2023-01-15
+        "%m/%d/%Y",  # 01/15/2023
+        "%d/%m/%Y",  # 15/01/2023
+        "%Y/%m/%d",  # 2023/01/15
+        "%m-%d-%Y",  # 01-15-2023
+        "%d-%m-%Y",  # 15-01-2023
+        "%Y.%m.%d",  # 2023.01.15
+        "%m.%d.%Y",  # 01.15.2023
+        "%d.%m.%Y",  # 15.01.2023
+        "%Y%m%d",  # 20230115
+        "%m/%d/%y",  # 01/15/23
+        "%d/%m/%y",  # 15/01/23
+        "%y-%m-%d",  # 23-01-15
+        "%B %d, %Y",  # January 15, 2023
+        "%d %B %Y",  # 15 January 2023
+        "%b %d, %Y",  # Jan 15, 2023
+        "%d %b %Y",  # 15 Jan 2023
+        "%Y-%m-%d %H:%M:%S",  # 2023-01-15 14:30:00
+        "%m/%d/%Y %H:%M:%S",  # 01/15/2023 14:30:00
+        "%Y-%m-%dT%H:%M:%S",  # 2023-01-15T14:30:00
+        "%Y-%m-%dT%H:%M:%SZ",  # 2023-01-15T14:30:00Z
+    ]
+
+    try:
+        # Get sample of non-null values
+        sample_query = f"""
+        SELECT DISTINCT "{column_name}" as date_val
+        FROM read_csv('{csv_path}')
+        WHERE "{column_name}" IS NOT NULL 
+          AND TRIM(CAST("{column_name}" AS VARCHAR)) != ''
+        LIMIT 100
+        """
+
+        sample_result = duckdb.sql(sample_query).fetchdf()  # type:ignore
+        if sample_result.empty:  # type:ignore
+            return {"error": "No non-null values found"}
+
+        sample_values = sample_result["date_val"].astype(str).tolist()  # type:ignore
+
+        best_format: str | None = None
+        best_success_rate = 0.0
+        best_parsed_dates: list[datetime] = []
+
+        for date_format in date_formats:
+            parsed_dates: list[datetime] = []
+            success_count = 0
+
+            for date_str in sample_values[:20]:  # Test on first 20 samples
+                try:
+                    if date_str and str(date_str).strip():
+                        parsed_date = datetime.strptime(str(date_str).strip(), date_format)
+                        parsed_dates.append(parsed_date)
+                        success_count += 1
+                except (ValueError, TypeError):
+                    continue
+
+            success_rate = success_count / min(len(sample_values), 20)
+
+            if success_rate > best_success_rate and success_rate >= 0.8:  # At least 80% success
+                best_format = date_format
+                best_success_rate = success_rate
+                best_parsed_dates = parsed_dates
+
+        if not best_format:
+            # Try DuckDB's built-in date parsing with different formats
+            duckdb_formats = [
+                "strptime(\"{col}\", '%Y-%m-%d')",
+                "strptime(\"{col}\", '%m/%d/%Y')",
+                "strptime(\"{col}\", '%d/%m/%Y')",
+                "strptime(\"{col}\", '%Y/%m/%d')",
+                "strptime(\"{col}\", '%m-%d-%Y')",
+                "strptime(\"{col}\", '%d-%m-%Y')",
+                "strptime(\"{col}\", '%Y.%m.%d')",
+                "strptime(\"{col}\", '%m.%d.%Y')",
+                "strptime(\"{col}\", '%d.%m.%Y')",
+                "strptime(\"{col}\", '%Y%m%d')",
+                "strptime(\"{col}\", '%B %d, %Y')",
+                "strptime(\"{col}\", '%d %B %Y')",
+                "strptime(\"{col}\", '%b %d, %Y')",
+                "strptime(\"{col}\", '%d %b %Y')",
+            ]
+
+            for fmt in duckdb_formats:
+                try:
+                    test_query = f"""
+                    SELECT 
+                        MIN({fmt.format(col=column_name)}) as min_date,
+                        MAX({fmt.format(col=column_name)}) as max_date,
+                        COUNT({fmt.format(col=column_name)}) as success_count,
+                        COUNT(*) as total_count
+                    FROM read_csv('{csv_path}')
+                    WHERE "{column_name}" IS NOT NULL
+                    """
+
+                    result = duckdb.sql(test_query).fetchone()  # type:ignore
+                    if result and result[0] is not None and result[1] is not None:  # type:ignore
+                        return {
+                            "date_format": fmt,
+                            "duckdb_format": True,
+                            "min_date": result[0],  # type:ignore
+                            "max_date": result[1],  # type:ignore
+                            "successful_parse_count": result[2],  # type:ignore
+                            "total_count": result[3],  # type:ignore
+                            "success_rate": result[2] / result[3] if result[3] > 0 else 0,  # type:ignore
+                        }
+                except Exception:
+                    continue
+
+            return {"error": "No suitable date format found"}
+
+        # Parse all dates with the best format
+        full_parse_query = f"""
+        SELECT COUNT(*) as total_count
+        FROM read_csv('{csv_path}')
+        WHERE "{column_name}" IS NOT NULL
+        """
+
+        total_result = duckdb.sql(full_parse_query).fetchone()  # type:ignore
+        total_count = total_result[0] if total_result else 0  # type:ignore
+
+        return {
+            "date_format": best_format,
+            "duckdb_format": False,
+            "min_date": min(best_parsed_dates) if best_parsed_dates else None,
+            "max_date": max(best_parsed_dates) if best_parsed_dates else None,
+            "successful_parse_count": len(best_parsed_dates),
+            "total_count": total_count,
+            "success_rate": best_success_rate,
+            "sample_parsed_dates": [d.isoformat() for d in best_parsed_dates[:5]],
+        }
+
+    except Exception as e:
+        return {"error": f"Date format detection failed: {str(e)}"}
 
 
 if __name__ == "__main__":

@@ -129,36 +129,17 @@ FROM baseline_revenue, future_revenue;
 
 **CRITICAL: Always divide future period revenue by baseline period revenue, NOT the reverse.**
 
-### Critical Date Logic Patterns (STANDARDIZED)
-
-**ALWAYS use these exact patterns for consistency:**
-
+### Critical Date Logic Patterns
 ```sql
--- Active as of specific date (use > for end date to exclude customers who ended ON that date)
-WHERE {start_date_column} <= 'YYYY-MM-DD' 
-  AND ({end_date_column} > 'YYYY-MM-DD' OR {end_date_column} IS NULL)
+-- Active as of specific date (adapt column names)
+WHERE ({end_date_column} > 'YYYY-MM-DD' OR {end_date_column} IS NULL)
 
--- Active during period (overlapping date ranges)
-WHERE {start_date_column} <= 'period_end_date' 
-  AND ({end_date_column} >= 'period_start_date' OR {end_date_column} IS NULL)
+-- Active during period (adapt column names)
+WHERE {start_date_column} <= 'period_end' 
+  AND ({end_date_column} >= 'period_start' OR {end_date_column} IS NULL)
 
--- Revenue/transactions for specific period (INCLUSIVE boundaries)
-WHERE {transaction_date_column} >= 'start_date' AND {transaction_date_column} <= 'end_date'
-
--- Alternative using BETWEEN (also inclusive)
+-- Revenue for specific period (adapt column names)
 WHERE {transaction_date_column} BETWEEN 'start_date' AND 'end_date'
-```
-
-**Date Format Handling:**
-- **ALWAYS check data format first** using the `format_detection` info from CSV summary
-- **Use proper date casting**: If format detected, use: `strptime("{col_name}", 'detected_format')`
-- **Fallback safely**: If no format detected, use: `TRY_CAST("{col_name}" AS DATE)`
-
-**Date Range Validation:**
-```sql
--- Example: Validate "Jan 2023" period analysis
--- "Jan 2023" = 2023-01-01 to 2023-01-31 (inclusive)
-WHERE transaction_date >= '2023-01-01' AND transaction_date <= '2023-01-31'
 ```
 
 ### Universal Metric Definitions
@@ -187,35 +168,17 @@ monthly_metric = base_monthly_value * 60
 -- Always match the multiplier to your analysis granularity
 ```
 
-**Date Reference Interpretation (STANDARDIZED RULES):**
-
-**ALWAYS follow these consistent rules:**
-
-1. **Period References** ("Jan 2023", "Q1 2023", "2023"):
-   - **ALWAYS interpret as FULL PERIOD** unless explicitly stated otherwise
-   - "Jan 2023" = January 1-31, 2023 (inclusive: `>= '2023-01-01' AND <= '2023-01-31'`)
-   - "Q1 2023" = January 1 - March 31, 2023 (inclusive)
-   - "2023" = January 1 - December 31, 2023 (inclusive)
-
-2. **Point-in-Time References** ("as of Jan 2023", "end of Jan 2023"):
-   - "as of Jan 2023" = January 31, 2023 (last day of the period)
-   - "beginning of Jan 2023" = January 1, 2023 (first day of the period)
-
-3. **Consistent Date Boundary Logic**:
-   - **For INCLUSIVE period analysis**: `>= 'start_date' AND <= 'end_date'`
-   - **For customer status "active during period"**: `start_date <= 'period_end' AND (end_date >= 'period_start' OR end_date IS NULL)`
-   - **For customer status "active as of date"**: `start_date <= 'target_date' AND (end_date > 'target_date' OR end_date IS NULL)`
-
-4. **Never use ambiguous boundaries** like `> 'start_date'` or `< 'end_date'` for period analysis
+**Date Reference Interpretation:**
+- **"Jan 2023"** could mean:
+  - Point-in-time: January 1st, 2023 (for status checks)
+  - Period analysis: January 1-31, 2023 (for revenue calculations)
+  - **Always clarify in your planning phase**
 
 **Common Time Period Errors to Avoid:**
 - ❌ Using months (60) in yearly analysis contexts
-- ❌ **CRITICAL: Using inconsistent date boundaries** (mixing `>`, `>=`, `<`, `<=`)
-- ❌ **CRITICAL: Not detecting date formats** leading to null data
-- ❌ **CRITICAL: Assuming "Jan 2023" means January 1st** when user wants full month
+- ❌ Assuming "Jan 2023" means January 1st when user wants full month
 - ❌ Mixing time granularities within the same calculation
 - ❌ Not specifying exact date ranges for period calculations
-- ❌ **Using `TRY_CAST` without checking format detection first**
 
 ### Churn Rate Calculation (Critical Pattern)
 **CRITICAL: Churn rate must be calculated at the CUSTOMER level, not individual record level.**
@@ -492,15 +455,8 @@ Should I investigate further or exclude from revenue calculations?"
 
 ### 1. Data Discovery & Analysis Planning
 - **First action for every task**: `list_csv_files` to catalog all available data
-- **Check date format detection** in CSV summaries for any date columns
 - **Apply systematic planning methodology** for complex analysis
 - **Present complete plan via `UserInteraction`** before execution
-
-### 1.5. Date Handling Tools (CRITICAL)
-- **`parse_date_reference`**: Parse user date references consistently ("Jan 2023" → exact date ranges)
-- **`get_date_cast_expression`**: Get proper SQL date casting based on detected format
-- **Always use these tools** before writing date-related SQL queries
-- **Validate date interpretations** in your planning phase
 
 ### 2. SQL Analysis (`RunSQL`) - DuckDB Powered
 

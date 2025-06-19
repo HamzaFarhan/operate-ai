@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -64,55 +65,57 @@ def add_current_time() -> str:
     return f"<current_time>\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n</current_time>"
 
 
-def create_sequential_plan(ctx: RunContext[AgentDeps], initial_plan: str) -> str:
-    """Creates a new sequential methodology plan file with user-approved systematic analysis steps.
+def create_plan_steps(ctx: RunContext[AgentDeps], initial_plan: str) -> str:
+    """Creates a new sequential plan file with user-approved systematic analysis steps.
 
-    This creates a new plan.md file containing the SEQUENTIAL METHODOLOGY steps that were presented to the user during systematic planning and approved by them. These are the atomic, unambiguous, sequential steps that you will follow to complete the financial analysis. Users can view and edit this file.
+    This creates a new plan.md file containing the steps that were presented to the user during systematic planning and approved by them. These are the atomic, unambiguous, sequential steps that you will follow to complete the financial analysis. Users can view and edit this file.
 
     You can include more detailed specifications for each step than what was in the original
-    SEQUENTIAL METHODOLOGY section - the user approved the overall approach, and you can
+    section - the user approved the overall approach, and you can
     expand with specific implementation details from anywhere in the approved plan.
 
     Use this after user has approved your systematic analysis plan from the planning phase.
 
     Args:
-        initial_plan: The user-approved sequential methodology steps formatted as markdown.
-            Can include more detailed step descriptions than the original methodology section.
+        initial_plan: The user-approved sequential steps formatted as markdown. Can include more detailed step descriptions than the original section.
 
     Returns:
         str: A formatted string containing the created plan content wrapped in XML tags.
 
     Example:
-        create_sequential_plan("## SEQUENTIAL METHODOLOGY (User Approved)\n1. Data preparation: Filter active customers using subscription table\n2. Base calculation: Calculate monthly revenue per customer cohort\n3. Final output: Generate cohort analysis table with retention metrics")
+        create_plan_steps("## SEQUENTIAL STEPS (User Approved)\n1. Data preparation: Filter active customers using subscription table\n2. Base calculation: Calculate monthly revenue per customer cohort\n3. Final output: Generate cohort analysis table with retention metrics")
     """
     plan_file = ctx.deps.plan_path
     plan_file.write_text(initial_plan)
-    return f"<sequential_plan>\nCreated new plan file at: {plan_file}\n\n{initial_plan}\n</sequential_plan>"
+    return f"<sequential_plan>\n{initial_plan}\n</sequential_plan>"
 
 
-def update_sequential_plan_step(ctx: RunContext[AgentDeps], old_text: str, new_text: str) -> str:
-    """Updates existing content in the user-approved sequential methodology plan file.
+def update_plan(ctx: RunContext[AgentDeps], old_text: str, new_text: str) -> str:
+    """Updates existing content in the user-approved sequential plan file.
 
-    This replaces specific text in the existing plan file containing the SEQUENTIAL METHODOLOGY steps that were approved by the user. Commonly used to mark steps as completed during analysis execution, update step descriptions, or modify existing methodology steps. Only replaces the first occurrence for precision.
+    This replaces specific text in the existing plan file containing the steps that were approved by the user. Only replaces the first occurrence for precision.
 
-    You can add more detailed specifications when updating steps - the user approved the overall
-    methodology, so you can expand with specific implementation details as needed during execution.
+    **TOKEN EFFICIENCY:** To minimize token usage, provide only the minimal substring needed for replacement in `old_text`. Don't pass entire steps - just pass enough characters to uniquely identify what needs to be replaced. Since this replaces the FIRST occurrence, include enough context to differentiate from similar text in other steps.
 
-    Use this during analysis execution to track progress on the user-approved systematic plan.
+    **MULTIPLE UPDATES:** When one SQL query accomplishes multiple steps, prefer making separate calls to this tool for each step rather than one large call. This keeps each call token-efficient while still tracking all progress.
 
     Args:
-        old_text: The exact text to find and replace in the plan file.
-        new_text: The replacement text. Can include more details than the original step.
+        old_text: The minimal substring to find and replace. Include enough context to ensure uniqueness but keep it concise for token efficiency.
+        new_text: The replacement text.
 
     Returns:
         str: A formatted string containing the updated plan content wrapped in XML tags.
 
     Examples:
-        # Mark a step as completed during execution
-        update_sequential_plan_step("1. Data preparation: Filter active customers", "1. Data preparation: Filter active customers - ✓ COMPLETED")
+        # Efficient: Mark step as completed using minimal substring
+        update_plan("1. Data preparation", "1. Data preparation - ✓ COMPLETED")
 
-        # Update step with more specific business logic
-        update_sequential_plan_step("2. Base calculation: Calculate revenue metrics", "2. Base calculation: Calculate MRR using active customer count × ARPU")
+        # Preferred: Update multiple steps with separate calls
+        update_plan("2. Base calculation", "2. Base calculation - ✓ COMPLETED")
+        update_plan("3. Aggregation", "3. Aggregation - ✓ COMPLETED")
+
+        # Updating step content: Differentiate similar steps
+        update_plan("2. Base calculation: Calculate revenue", "2. Base calculation: Calculate MRR using ARPU")
     """
     plan_file = ctx.deps.plan_path
 
@@ -130,20 +133,19 @@ def update_sequential_plan_step(ctx: RunContext[AgentDeps], old_text: str, new_t
     return f"<sequential_plan>\nUpdated plan step successfully.\n\n{updated_content}\n</sequential_plan>"
 
 
-def add_sequential_plan_step(ctx: RunContext[AgentDeps], new_step: str) -> str:
-    """Adds a new step to the user-approved sequential methodology plan file.
+def add_plan_step(ctx: RunContext[AgentDeps], new_step: str) -> str:
+    """Adds a new step to the user-approved sequential plan file.
 
-    This adds a new step to the end of the existing plan file containing the SEQUENTIAL METHODOLOGY steps that were approved by the user. Use this when you discover during analysis execution that additional methodology steps are needed that weren't in the original user-approved plan, or when expanding the analysis scope based on findings.
+    This adds a new step to the end of the existing plan file containing the steps that were approved by the user. Use this when you discover during analysis execution that additional steps are needed that weren't in the original user-approved plan, or when expanding the analysis scope based on findings.
 
     Args:
-        new_step: The new methodology step to append to the plan. Should be properly formatted
-            and follow the atomic, sequential pattern (e.g., "6. Validate results against business logic").
+        new_step: The new step to add to the plan. Should be properly formatted and follow the atomic, sequential pattern (e.g., "6. Validate results against business logic").
 
     Returns:
         str: A formatted string containing the updated plan content wrapped in XML tags.
 
     Example:
-        add_sequential_plan_step("4. Validation step: Cross-check MRR calculations against transaction totals")
+        add_plan_step("4. Validation step: Cross-check MRR calculations against transaction totals")
     """
     plan_file = ctx.deps.plan_path
 
@@ -355,9 +357,9 @@ def create_agent(
             calculate_sum,
             calculate_difference,
             calculate_mean,
-            create_sequential_plan,
-            update_sequential_plan_step,
-            add_sequential_plan_step,
+            create_plan_steps,
+            update_plan,
+            add_plan_step,
         ],
         mcp_servers=mcp_servers,
         output_type=output_types,
@@ -402,25 +404,51 @@ async def thread(
     return res.output
 
 
-output = None
-step = 0
-step_limit = 10
-while not isinstance(output, TaskResult) and step < step_limit:
-    output = await thread(
-        thread_dir=thread_dir,
-        user_prompt=user_prompt,
-        model=model,
-        use_excel_tools=use_excel_tools,
-        use_thinking=use_thinking,
-        use_memory=use_memory,
-    )
-    logger.info(f"Output: {output}")
-    if do_user_interaction:
-        user_prompt = input(f"{output} > ")
-    else:
+def setup_workspace(data_dir: Path | str, workspace_dir: Path | str, delete_existing: bool = False):
+    data_dir = Path(data_dir)
+    workspace_dir = Path(workspace_dir)
+    if workspace_dir.exists() and delete_existing:
+        shutil.rmtree(workspace_dir)
+        logger.info(f"Removed {workspace_dir}")
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    workspace_data_dir = workspace_dir / "data"
+    if data_dir.exists():
+        try:
+            shutil.copytree(data_dir, workspace_data_dir, dirs_exist_ok=True)
+            logger.success(f"Copied data from {data_dir} to {workspace_data_dir}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to copy data from {data_dir} to {workspace_data_dir}: {e}") from e
+
+
+async def run_task(task: str, workspace_id: str = "1", thread_id: str = "1") -> TaskResult:
+    main_dir = MODULE_DIR.parent.parent
+    workspace_dir = main_dir / f"workspaces/{workspace_id}"
+    thread_dir = workspace_dir / f"threads/{thread_id}"
+    setup_workspace(main_dir / "operateai_scenario1_data", workspace_dir, delete_existing=True)
+    user_prompt = f"Task: {task}"
+    while True:
+        output = await thread(
+            thread_dir=thread_dir,
+            user_prompt=user_prompt,
+            use_excel_tools=False,
+            use_thinking=False,
+            use_memory=False,
+        )
+        if isinstance(output, TaskResult):
+            Path(thread_dir / "task_result.md").write_text(output.message)
+            return output
+        logger.info(f"Output: {output}")
         user_prompt = (
             "The user is not available to provide input for this task. "
             "Please proceed independently by making reasonable assumptions where needed.\n"
             "Compile all your assumptions, any issues encountered, and your solutions in your final comprehensive response.\n"
             "Push through to completion even if you think you need user clarification - just document what you assumed and why."
         )
+
+
+if __name__ == "__main__":
+    res = asyncio.run(
+        run_task(
+            "Calculate the Average Revenue Per User (ARPU) for customers who were active in January 2023, broken down by industry segment.",
+        )
+    )

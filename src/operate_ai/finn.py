@@ -21,6 +21,7 @@ from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_core import to_json
 
 from operate_ai.csv_utils import csv_summary
@@ -49,6 +50,7 @@ class AgentDeps:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.analysis_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
+        self.plan_steps_made: bool = False
 
 
 def add_dirs(ctx: RunContext[AgentDeps]) -> str:
@@ -83,14 +85,15 @@ def create_plan_steps(ctx: RunContext[AgentDeps], initial_plan: str) -> str:
         str: A formatted string containing the created plan content wrapped in XML tags.
 
     Example:
-        create_plan_steps("## SEQUENTIAL STEPS (User Approved)\n1. Data preparation: Filter active customers using subscription table\n2. Base calculation: Calculate monthly revenue per customer cohort\n3. Final output: Generate cohort analysis table with retention metrics")
+        create_plan_steps("## SEQUENTIAL STEPS\n1. Data preparation: Filter active customers using subscription table\n2. Base calculation: Calculate monthly revenue per customer cohort\n3. Final output: Generate cohort analysis table with retention metrics")
     """
     plan_file = ctx.deps.plan_path
     plan_file.write_text(initial_plan)
+    ctx.deps.plan_steps_made = True
     return f"<sequential_plan>\n{initial_plan}\n</sequential_plan>"
 
 
-def update_plan(ctx: RunContext[AgentDeps], old_text: str, new_text: str) -> str:
+def update_plan_steps(ctx: RunContext[AgentDeps], old_text: str, new_text: str) -> str:
     """Updates existing content in the user-approved sequential plan file.
 
     This replaces specific text in the existing plan file containing the steps that were approved by the user. Only replaces the first occurrence for precision.
@@ -113,11 +116,11 @@ def update_plan(ctx: RunContext[AgentDeps], old_text: str, new_text: str) -> str
     Examples:
         # Maximum efficiency: Use minimal unique substring
         # For "1. Data preparation: Load customer data" vs "2. Data preparation: Load revenue data"
-        update_plan("customer data", "customer data - ✓ COMPLETED")
-        update_plan("revenue data", "revenue data - ✓ COMPLETED")
+        update_plan_steps("customer data", "customer data - ✓ COMPLETED")
+        update_plan_steps("revenue data", "revenue data - ✓ COMPLETED")
 
         # Content updates: Use minimal middle part
-        update_plan("Calculate revenue", "Calculate MRR using ARPU")
+        update_plan_steps("Calculate revenue", "Calculate MRR using ARPU")
     """
     plan_file = ctx.deps.plan_path
 
@@ -161,7 +164,7 @@ def add_plan_step(ctx: RunContext[AgentDeps], new_step: str) -> str:
     return f"<sequential_plan>\nAdded new step to plan.\n\n{updated_content}\n</sequential_plan>"
 
 
-def read_plan(ctx: RunContext[AgentDeps]) -> str:
+def read_plan_steps(ctx: RunContext[AgentDeps]) -> str:
     """Reads the current user-approved sequential plan file.
 
     This reads the existing plan file containing the steps that were approved by the user. Use this to check the current plan status, see what steps have been completed, or reference the overall analysis approach.
@@ -339,6 +342,11 @@ class TaskResult(BaseModel):
     message: str = Field(description="The final response to the user.")
 
 
+async def only_if_plan_steps_made(ctx: RunContext[AgentDeps], tool_def: ToolDefinition) -> ToolDefinition | None:
+    if ctx.deps.plan_steps_made:
+        return tool_def
+
+
 def create_agent(
     agent_deps: AgentDeps,
     model: Model | KnownModelName,
@@ -358,6 +366,7 @@ def create_agent(
     excel_server = MCPServerStdio(command="uvx", args=[str(MODULE_DIR / "../../../excel-mcp-server"), "stdio"])
     mcp_servers: list[MCPServerStdio] = []
     prompts = [Path(MODULE_DIR / "prompts/cfo_v2.md").read_text()]
+    output_types: list[type | Callable[..., Any]] = [UserInteraction, TaskResult]
     if use_thinking:
         mcp_servers.append(thinking_server)
     if use_memory:
@@ -365,23 +374,23 @@ def create_agent(
         prompts.append(Path(MODULE_DIR / "prompts/memory.md").read_text())
     if use_excel_tools:
         mcp_servers.append(excel_server)
-    output_types: list[type | Callable[..., Any]] = [run_sql, UserInteraction, TaskResult]
-    if use_excel_tools:
         output_types.append(WriteDataToExcelResult)
+    if agent_deps.plan_steps_made:
+        output_types.append(run_sql)
     return Agent(
         model=model,
         instructions=[*prompts, add_current_time, add_dirs, list_data_files, list_analysis_files],
         deps_type=AgentDeps,
         retries=MAX_RETRIES,
         tools=[
-            load_analysis_file,
-            calculate_sum,
-            calculate_difference,
-            calculate_mean,
             create_plan_steps,
-            update_plan,
+            update_plan_steps,
             add_plan_step,
-            read_plan,
+            read_plan_steps,
+            Tool(load_analysis_file, prepare=only_if_plan_steps_made),
+            Tool(calculate_sum, prepare=only_if_plan_steps_made),
+            Tool(calculate_difference, prepare=only_if_plan_steps_made),
+            Tool(calculate_mean, prepare=only_if_plan_steps_made),
         ],
         mcp_servers=mcp_servers,
         output_type=output_types,
@@ -391,7 +400,7 @@ def create_agent(
 
 
 async def thread(
-    thread_dir: Path,
+    agent_deps: AgentDeps,
     user_prompt: str,
     model: KnownModelName | FallbackModel | None = None,
     use_excel_tools: bool = True,
@@ -399,11 +408,10 @@ async def thread(
     use_memory: bool = True,
     temperature: float = 0.0,
 ) -> RunSQLResult | WriteDataToExcelResult | UserInteraction | TaskResult:
-    agent_deps = AgentDeps(thread_dir=thread_dir)
     model = model or FallbackModel(
-        "openai:gpt-4.1-mini",
-        "google-gla:gemini-2.5-flash",
         "anthropic:claude-4-sonnet-20250514",
+        "google-gla:gemini-2.5-flash",
+        "openai:gpt-4.1-mini",
         "openai:gpt-4.1",
     )
     agent = create_agent(
@@ -447,10 +455,11 @@ async def run_task(task: str, workspace_id: str = "1", thread_id: str = "1") -> 
     workspace_dir = main_dir / f"workspaces/{workspace_id}"
     thread_dir = workspace_dir / f"threads/{thread_id}"
     setup_workspace(main_dir / "operateai_scenario1_data", workspace_dir, delete_existing=True)
+    agent_deps = AgentDeps(thread_dir=thread_dir)
     user_prompt = f"Task: {task}"
     while True:
         output = await thread(
-            thread_dir=thread_dir,
+            agent_deps=agent_deps,
             user_prompt=user_prompt,
             use_excel_tools=False,
             use_thinking=False,

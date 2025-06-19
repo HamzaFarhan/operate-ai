@@ -95,27 +95,29 @@ def update_plan(ctx: RunContext[AgentDeps], old_text: str, new_text: str) -> str
 
     This replaces specific text in the existing plan file containing the steps that were approved by the user. Only replaces the first occurrence for precision.
 
-    **TOKEN EFFICIENCY:** To minimize token usage, provide only the minimal substring needed for replacement in `old_text`. Don't pass entire steps - just pass enough characters to uniquely identify what needs to be replaced. Since this replaces the FIRST occurrence, include enough context to differentiate from similar text in other steps.
+    **TOKEN EFFICIENCY:** Use the absolute minimum substring needed. Don't use full steps or even full step titles - use just enough to uniquely identify what to replace:
+    - **For completion:** Use just the unique ending part (e.g., "revenue analysis" instead of "1. Data preparation: Load and clean revenue analysis")
+    - **For content updates:** Use just the unique middle part that needs changing
+    - **For full step replacement:** Use the full step text when the entire step needs to be rewritten
+    - **Only use more text if absolutely necessary** to differentiate from similar content
 
     **MULTIPLE UPDATES:** When one SQL query accomplishes multiple steps, prefer making separate calls to this tool for each step rather than one large call. This keeps each call token-efficient while still tracking all progress.
 
     Args:
-        old_text: The minimal substring to find and replace. Include enough context to ensure uniqueness but keep it concise for token efficiency.
+        old_text: The absolute minimal substring to find and replace. Use only as much text as needed for uniqueness.
         new_text: The replacement text.
 
     Returns:
         str: A formatted string containing the updated plan content wrapped in XML tags.
 
     Examples:
-        # Efficient: Mark step as completed using minimal substring
-        update_plan("1. Data preparation", "1. Data preparation - ✓ COMPLETED")
+        # Maximum efficiency: Use minimal unique substring
+        # For "1. Data preparation: Load customer data" vs "2. Data preparation: Load revenue data"
+        update_plan("customer data", "customer data - ✓ COMPLETED")
+        update_plan("revenue data", "revenue data - ✓ COMPLETED")
 
-        # Preferred: Update multiple steps with separate calls
-        update_plan("2. Base calculation", "2. Base calculation - ✓ COMPLETED")
-        update_plan("3. Aggregation", "3. Aggregation - ✓ COMPLETED")
-
-        # Updating step content: Differentiate similar steps
-        update_plan("2. Base calculation: Calculate revenue", "2. Base calculation: Calculate MRR using ARPU")
+        # Content updates: Use minimal middle part
+        update_plan("Calculate revenue", "Calculate MRR using ARPU")
     """
     plan_file = ctx.deps.plan_path
 

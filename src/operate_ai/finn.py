@@ -161,6 +161,25 @@ def add_plan_step(ctx: RunContext[AgentDeps], new_step: str) -> str:
     return f"<sequential_plan>\nAdded new step to plan.\n\n{updated_content}\n</sequential_plan>"
 
 
+def read_plan(ctx: RunContext[AgentDeps]) -> str:
+    """Reads the current user-approved sequential plan file.
+
+    This reads the existing plan file containing the steps that were approved by the user. Use this to check the current plan status, see what steps have been completed, or reference the overall analysis approach.
+
+    Returns:
+        str: A formatted string containing the current plan content wrapped in XML tags.
+    """
+    plan_file = ctx.deps.plan_path
+
+    if not plan_file.exists():
+        return (
+            "<sequential_plan>\nNo plan file exists yet. Use create_plan_steps to create one.\n</sequential_plan>"
+        )
+
+    current_content = plan_file.read_text()
+    return f"<sequential_plan>\n{current_content}\n</sequential_plan>"
+
+
 def _list_csv_files(dir: Path) -> str:
     """
     Lists all available csv files in the `dir` and their summaries.
@@ -362,6 +381,7 @@ def create_agent(
             create_plan_steps,
             update_plan,
             add_plan_step,
+            read_plan,
         ],
         mcp_servers=mcp_servers,
         output_type=output_types,

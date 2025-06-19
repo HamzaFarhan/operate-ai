@@ -381,10 +381,10 @@ async def thread(
 ) -> RunSQLResult | WriteDataToExcelResult | UserInteraction | TaskResult:
     agent_deps = AgentDeps(thread_dir=thread_dir)
     model = model or FallbackModel(
+        "openai:gpt-4.1-mini",
+        "google-gla:gemini-2.5-flash",
         "anthropic:claude-4-sonnet-20250514",
         "openai:gpt-4.1",
-        "google-gla:gemini-2.5-flash-preview-05-20",
-        "openai:gpt-4.1-mini",
     )
     agent = create_agent(
         model=model,

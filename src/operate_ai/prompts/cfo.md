@@ -201,6 +201,15 @@ monthly_metric = base_monthly_value * 60
    - "as of Jan 2023" = January 31, 2023 (last day of the period)
    - "beginning of Jan 2023" = January 1, 2023 (first day of the period)
 
+**Date Interpretation Examples:**
+
+| User Query | Agent Should Conclude |
+|------------|----------------------|
+| Calculate Revenue for March 2024 | `>= '2024-03-01' AND <= '2024-03-31'` |
+| What are the number of orders on April 7th 2025 | `= '2025-04-07'` |
+| What are the number of orders on April 7th | Agent should clarify which year |
+| What is revenue for Q3 2024 | `>= '2024-07-01' AND <= '2024-09-30'` |
+
 3. **Consistent Date Boundary Logic**:
    - **For INCLUSIVE period analysis**: `>= 'start_date' AND <= 'end_date'`
    - **For customer status "active during period"**: `start_date <= 'period_end' AND (end_date >= 'period_start' OR end_date IS NULL)`

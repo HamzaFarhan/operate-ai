@@ -487,7 +487,7 @@ async def run_task(task: str, workspace_id: str = "1", thread_id: str = "1") -> 
         output = await thread(
             agent_deps=agent_deps,
             user_prompt=user_prompt,
-            use_excel_tools=False,
+            use_excel_tools=True,
             use_thinking=False,
             use_memory=False,
         )
@@ -506,6 +506,6 @@ async def run_task(task: str, workspace_id: str = "1", thread_id: str = "1") -> 
 if __name__ == "__main__":
     res = asyncio.run(
         run_task(
-            "Calculate the Average Revenue Per User (ARPU) for customers who were active in January 2023, broken down by industry segment.",
+            "Calculate the Average Revenue Per User (ARPU) for customers who were active in January 2023, broken down by industry segment. Compile in an excel workbook.",
         )
     )

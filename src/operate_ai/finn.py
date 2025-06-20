@@ -18,7 +18,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.mcp import MCPServerStdio
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ToolReturnPart
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.tools import Tool, ToolDefinition
@@ -50,6 +50,7 @@ class AgentDeps:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.analysis_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
+        self.plan_presented: bool = False
         self.plan_steps_made: bool = False
 
 
@@ -321,6 +322,14 @@ class WriteDataToExcelResult(BaseModel):
     excel_file_path: str
 
 
+async def present_plan(ctx: RunContext[AgentDeps], plan: str) -> str:
+    """
+    Presents the current plan to the user.
+    """
+    ctx.deps.plan_presented = True
+    return plan
+
+
 class UserInteraction(BaseModel):
     """
     Interacts with the user. Could be:
@@ -342,6 +351,11 @@ class TaskResult(BaseModel):
     message: str = Field(description="The final response to the user.")
 
 
+async def only_if_plan_presented(ctx: RunContext[AgentDeps], tool_def: ToolDefinition) -> ToolDefinition | None:
+    if ctx.deps.plan_presented:
+        return tool_def
+
+
 async def only_if_plan_steps_made(ctx: RunContext[AgentDeps], tool_def: ToolDefinition) -> ToolDefinition | None:
     if ctx.deps.plan_steps_made:
         return tool_def
@@ -354,7 +368,7 @@ def create_agent(
     use_thinking: bool = True,
     use_memory: bool = True,
     temperature: float = 0.0,
-) -> Agent[AgentDeps, RunSQLResult | WriteDataToExcelResult | UserInteraction | TaskResult]:
+) -> Agent[AgentDeps | WriteDataToExcelResult | UserInteraction | TaskResult | str]:
     thinking_server = MCPServerStdio(
         command="npx", args=["-y", "@modelcontextprotocol/server-sequential-thinking"]
     )
@@ -366,7 +380,7 @@ def create_agent(
     excel_server = MCPServerStdio(command="uvx", args=[str(MODULE_DIR / "../../../excel-mcp-server"), "stdio"])
     mcp_servers: list[MCPServerStdio] = []
     prompts = [Path(MODULE_DIR / "prompts/cfo_v2.md").read_text()]
-    output_types: list[type | Callable[..., Any]] = [UserInteraction, TaskResult]
+    output_types: list[type | Callable[..., Any]] = [present_plan, UserInteraction, TaskResult]
     if use_thinking:
         mcp_servers.append(thinking_server)
     if use_memory:
@@ -375,18 +389,17 @@ def create_agent(
     if use_excel_tools:
         mcp_servers.append(excel_server)
         output_types.append(WriteDataToExcelResult)
-    if agent_deps.plan_steps_made:
-        output_types.append(run_sql)
     return Agent(
         model=model,
         instructions=[*prompts, add_current_time, add_dirs, list_data_files, list_analysis_files],
         deps_type=AgentDeps,
         retries=MAX_RETRIES,
         tools=[
-            create_plan_steps,
-            update_plan_steps,
-            add_plan_step,
-            read_plan_steps,
+            Tool(create_plan_steps, prepare=only_if_plan_presented),
+            Tool(update_plan_steps, prepare=only_if_plan_presented),
+            Tool(add_plan_step, prepare=only_if_plan_presented),
+            Tool(read_plan_steps, prepare=only_if_plan_presented),
+            Tool(run_sql, prepare=only_if_plan_steps_made),
             Tool(load_analysis_file, prepare=only_if_plan_steps_made),
             Tool(calculate_sum, prepare=only_if_plan_steps_made),
             Tool(calculate_difference, prepare=only_if_plan_steps_made),
@@ -407,10 +420,10 @@ async def thread(
     use_thinking: bool = True,
     use_memory: bool = True,
     temperature: float = 0.0,
-) -> RunSQLResult | WriteDataToExcelResult | UserInteraction | TaskResult:
+) -> RunSQLResult | WriteDataToExcelResult | UserInteraction | TaskResult | str:
     model = model or FallbackModel(
-        "anthropic:claude-4-sonnet-20250514",
         "google-gla:gemini-2.5-flash",
+        "anthropic:claude-4-sonnet-20250514",
         "openai:gpt-4.1-mini",
         "openai:gpt-4.1",
     )
@@ -422,16 +435,29 @@ async def thread(
         use_memory=use_memory,
         temperature=temperature,
     )
-    res = await agent.run(
-        user_prompt=user_prompt,
-        deps=agent_deps,
-        message_history=ModelMessagesTypeAdapter.validate_json(agent_deps.message_history_path.read_bytes())
-        if agent_deps.message_history_path.exists()
-        else None,
-    )
-    agent_deps.message_history_path.write_bytes(to_json(res.all_messages()))
+    async with agent.run_mcp_servers():
+        async with agent.iter(
+            user_prompt=user_prompt,
+            deps=agent_deps,
+            message_history=ModelMessagesTypeAdapter.validate_json(agent_deps.message_history_path.read_bytes())
+            if agent_deps.message_history_path.exists()
+            else None,
+        ) as agent_run:
+            async for node in agent_run:
+                if agent.is_model_request_node(node):
+                    for part in node.request.parts:
+                        if isinstance(part, ToolReturnPart):
+                            if part.tool_name == "run_sql":
+                                agent_deps.message_history_path.write_bytes(
+                                    to_json(agent_run.ctx.state.message_history)
+                                )
+                                return part.content
+    if agent_run.result is None:
+        raise RuntimeError("Agent run failed to produce a result. Please try again.")
 
-    return res.output
+    agent_deps.message_history_path.write_bytes(to_json(agent_run.result.all_messages()))
+
+    return agent_run.result.output
 
 
 def setup_workspace(data_dir: Path | str, workspace_dir: Path | str, delete_existing: bool = False):

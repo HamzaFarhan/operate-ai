@@ -373,6 +373,7 @@ VALIDATION APPROACH:
 
 DELIVERY FORMAT:
 - [Specific table structures and column requirements]
+- Charts (if requested): [Proposed chart types with business justification - get user approval if not specified]
 
 Proceed with this systematic approach?
 ```
@@ -651,6 +652,12 @@ OVER: load_analysis_file() → manual calculation
 - **Transparent formulas**: Create summary sheets using Excel formulas (SUM, VLOOKUP, etc.) that reference the CSV data sheets
 - **No SQL code**: All calculations must be in Excel formulas, making workbook fully auditable
 - **UI delivery**: User sees full results in UI plus gets download button after each Excel operation
+
+**Chart Creation:**
+- **Available chart types**: line, bar, pie, scatter, area
+- **Only create if requested**: Charts are optional unless user explicitly asks for them
+- **Must create if requested**: If user asks for charts, they must be included
+- **Chart type selection**: If user doesn't specify chart type, agent should choose appropriate type based on data and get approval during planning phase
 
 **Key Principles:**
 - **Transparency**: Every calculation traceable through Excel formulas, no hard-coded values

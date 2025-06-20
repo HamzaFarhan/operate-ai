@@ -351,6 +351,36 @@ class TaskResult(BaseModel):
     message: str = Field(description="The final response to the user.")
 
 
+class AllStepsCompleted(BaseModel):
+    """
+    All steps have been completed.
+    """
+
+    ...
+
+
+class AllStepsNotCompleted(BaseModel):
+    """
+    Not all steps have been completed.
+    """
+
+    message: str = Field(description="The message for the agent to complete the remaining steps.")
+
+
+async def task_result(ctx: RunContext[AgentDeps], message: str) -> TaskResult:
+    """Returns the final response to the user."""
+    steps_checker = Agent(
+        model="google-gla:gemini-2.5-flash",
+        output_type=[AllStepsCompleted, AllStepsNotCompleted],
+        instructions="Have all steps of the plan been marked as completed?",
+    )
+    user_prompt = f"<sequential_plan>\n{ctx.deps.plan_path.read_text()}\n</sequential_plan>"
+    res = await steps_checker.run(user_prompt=user_prompt)
+    if isinstance(res.output, AllStepsCompleted):
+        return TaskResult(message=message)
+    raise ModelRetry(res.output.message)
+
+
 async def only_if_plan_presented(ctx: RunContext[AgentDeps], tool_def: ToolDefinition) -> ToolDefinition | None:
     if ctx.deps.plan_presented:
         return tool_def
@@ -368,7 +398,7 @@ def create_agent(
     use_thinking: bool = True,
     use_memory: bool = True,
     temperature: float = 0.0,
-) -> Agent[AgentDeps | WriteDataToExcelResult | UserInteraction | TaskResult | str]:
+) -> Agent[AgentDeps, WriteDataToExcelResult | UserInteraction | TaskResult | str]:
     thinking_server = MCPServerStdio(
         command="npx", args=["-y", "@modelcontextprotocol/server-sequential-thinking"]
     )
@@ -380,7 +410,7 @@ def create_agent(
     excel_server = MCPServerStdio(command="uvx", args=[str(MODULE_DIR / "../../../excel-mcp-server"), "stdio"])
     mcp_servers: list[MCPServerStdio] = []
     prompts = [Path(MODULE_DIR / "prompts/cfo_v2.md").read_text()]
-    output_types: list[type | Callable[..., Any]] = [present_plan, UserInteraction, TaskResult]
+    output_types: list[type | Callable[..., Any]] = [present_plan, UserInteraction, task_result]
     if use_thinking:
         mcp_servers.append(thinking_server)
     if use_memory:

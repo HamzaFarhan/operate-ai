@@ -60,7 +60,7 @@ def add_dirs(ctx: RunContext[AgentDeps]) -> str:
         f"<analysis_dir>\n{str(Path(ctx.deps.analysis_dir).expanduser().resolve())}\n</analysis_dir>\n"
         f"<results_dir>\n{str(Path(ctx.deps.results_dir).expanduser().resolve())}\n</results_dir>\n\n"
         "`analysis_result_file_name` for `run_sql` will be saved in the `analysis_dir`.\n"
-        "`workbook_name` for `write_sheet_from_file` will be saved in the `results_dir`."
+        "Excel workbooks will be saved in the `results_dir`."
     )
 
 
@@ -364,7 +364,7 @@ class AllStepsNotCompleted(BaseModel):
     Not all steps have been completed.
     """
 
-    message: str = Field(description="The message for the agent to complete the remaining steps.")
+    message: str
 
 
 async def task_result(ctx: RunContext[AgentDeps], message: str) -> TaskResult:
@@ -372,7 +372,13 @@ async def task_result(ctx: RunContext[AgentDeps], message: str) -> TaskResult:
     steps_checker = Agent(
         model="google-gla:gemini-2.5-flash",
         output_type=[AllStepsCompleted, AllStepsNotCompleted],
-        instructions="Have all steps of the plan been marked as completed?",
+        instructions=(
+            "Have all steps of the plan been marked as completed?\n"
+            "If every step is clearly marked as done, return AllStepsCompleted.\n"
+            "If any step is missing its completion mark, return AllStepsNotCompleted and include a terse message to the executor such as: 'Step 2 unfinished—if you've already done it, mark it; if not, do it now.'\n"
+            "You only see the markdown plan, so you cannot know the actual work status—prompt the executor to verify and act.\n"
+            "Be direct and specific—no generic advice."
+        ),
     )
     user_prompt = f"<sequential_plan>\n{ctx.deps.plan_path.read_text()}\n</sequential_plan>"
     res = await steps_checker.run(user_prompt=user_prompt)
@@ -517,7 +523,7 @@ async def run_task(task: str, workspace_id: str = "1", thread_id: str = "1") -> 
         output = await thread(
             agent_deps=agent_deps,
             user_prompt=user_prompt,
-            use_excel_tools=True,
+            use_excel_tools=False,
             use_thinking=False,
             use_memory=False,
         )
@@ -536,6 +542,6 @@ async def run_task(task: str, workspace_id: str = "1", thread_id: str = "1") -> 
 if __name__ == "__main__":
     res = asyncio.run(
         run_task(
-            "Calculate the Average Revenue Per User (ARPU) for customers who were active in January 2023, broken down by industry segment. Compile in an excel workbook.",
+            "Calculate the Average Revenue Per User (ARPU) for customers who were active in January 2023, broken down by industry segment.",
         )
     )

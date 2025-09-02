@@ -656,7 +656,6 @@ OVER: load_analysis_file() → manual calculation
 **Chart Creation:**
 - **Available chart types**: line, bar, pie, scatter, area
 - **Only create if requested**: Charts are optional unless user explicitly asks for them
-- **Must create if requested**: If user asks for charts, they must be included
 - **Chart type selection**: If user doesn't specify chart type, agent should choose appropriate type based on data and get approval during planning phase
 
 **Key Principles:**

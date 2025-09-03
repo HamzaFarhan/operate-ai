@@ -1,1 +1,0 @@
-Calculate the Average Revenue Per User (ARPU) for customers who were active in January 2023, broken down by industry segment.
